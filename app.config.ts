@@ -17,8 +17,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   ios: {
     supportsTablet: true,
-    bundleIdentifier: 'com.audiocards.app',
+    bundleIdentifier: 'com.joshuamcmahon.audiocards',
     infoPlist: {
+      ITSAppUsesNonExemptEncryption: false,
       NSSpeechRecognitionUsageDescription:
         'Audio Cards uses speech recognition for hands-free voice commands during review.',
       NSMicrophoneUsageDescription:
@@ -30,7 +31,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       foregroundImage: './assets/images/adaptive-icon.png',
       backgroundColor: '#1a1a2e',
     },
-    package: 'com.audiocards.app',
+    package: 'com.joshuamcmahon.audiocards',
     permissions: ['android.permission.RECORD_AUDIO'],
   },
   web: {
