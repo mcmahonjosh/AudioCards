@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import * as Speech from 'expo-speech';
 import {
   loadAvailableVoices,
@@ -6,8 +7,22 @@ import {
   VoiceInfo,
 } from './voiceMatcher';
 
+import {
+  configureLoudSpeakerAudio,
+  configurePlaybackAudio,
+} from '@/src/services/audio/audioSession';
+import {
+  sliderToInternalVolume,
+  SPEECH_VOLUME_SLIDER_DEFAULT,
+  TTS_VOLUME_INTERNAL_MAX,
+  TTS_VOLUME_INTERNAL_MIN,
+} from '@/src/services/tts/volumeUtils';
+import { clamp } from '@/src/scheduler/time';
+
 export interface SpeakOptions {
   rate?: number;
+  /** Slider value 0–100 (100 = loudest). */
+  volume?: number;
   voiceOverride?: string;
 }
 
@@ -20,7 +35,6 @@ class TtsServiceImpl {
   private resolveCurrent: (() => void) | null = null;
 
   async initialize(): Promise<void> {
-    if (this.initialized) return;
     this.voices = await loadAvailableVoices();
     this.initialized = true;
   }
@@ -50,9 +64,27 @@ class TtsServiceImpl {
     await this.initialize();
     await this.stop();
 
+    configurePlaybackAudio();
+
     const voice = options.voiceOverride
       ? this.voices.find((v) => v.identifier === options.voiceOverride)
       : resolveBestVoice(this.voices, locale);
+
+    const userVolume = sliderToInternalVolume(
+      options.volume ?? SPEECH_VOLUME_SLIDER_DEFAULT,
+    );
+    const volumeRange = TTS_VOLUME_INTERNAL_MAX - TTS_VOLUME_INTERNAL_MIN;
+    const volumeNorm = (userVolume - TTS_VOLUME_INTERNAL_MIN) / volumeRange;
+    // iOS native TTS has no volume param — boost pitch for louder perceived output
+    const pitch = clamp(1.0 + volumeNorm * 1.0, 1.0, 2.0);
+    const webVolume = clamp(0.5 + volumeNorm * 0.5, 0, 1);
+
+    const finish = (resolveFn: () => void) => {
+      this.state = 'idle';
+      this.resolveCurrent = null;
+      configureLoudSpeakerAudio();
+      resolveFn();
+    };
 
     return new Promise((resolve, reject) => {
       this.resolveCurrent = resolve;
@@ -61,24 +93,20 @@ class TtsServiceImpl {
       Speech.speak(text, {
         language: locale,
         voice: voice?.identifier,
-        rate: options.rate ?? 1.0,
+        rate: clamp((options.rate ?? 1.0) * (0.92 + volumeNorm * 0.08), 0.5, 2.0),
+        pitch,
+        volume: webVolume,
         onStart: () => {
           this.state = 'speaking';
         },
         onDone: () => {
-          this.state = 'idle';
-          this.resolveCurrent = null;
-          resolve();
+          finish(resolve);
         },
         onStopped: () => {
-          this.state = 'idle';
-          this.resolveCurrent = null;
-          resolve();
+          finish(resolve);
         },
         onError: (error) => {
-          this.state = 'idle';
-          this.resolveCurrent = null;
-          reject(error);
+          finish(() => reject(error));
         },
       });
     });
@@ -90,6 +118,9 @@ class TtsServiceImpl {
       this.state = 'idle';
       this.resolveCurrent?.();
       this.resolveCurrent = null;
+      if (Platform.OS === 'ios') {
+        configureLoudSpeakerAudio();
+      }
     }
   }
 

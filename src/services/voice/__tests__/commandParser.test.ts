@@ -1,24 +1,25 @@
-import { describe, it, expect } from 'node:test';
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 import { parseVoiceCommand } from '../commandParser';
 
 describe('commandParser', () => {
   it('parses flip command', () => {
-    expect(parseVoiceCommand('flip')).toBe('flip');
-    expect(parseVoiceCommand('show answer')).toBe('flip');
+    assert.equal(parseVoiceCommand('flip'), 'flip');
+    assert.equal(parseVoiceCommand('show answer'), 'flip');
   });
 
   it('parses rating commands', () => {
-    expect(parseVoiceCommand('good')).toBe('good');
-    expect(parseVoiceCommand('that was easy')).toBe('easy');
-    expect(parseVoiceCommand('again')).toBe('again');
+    assert.equal(parseVoiceCommand('good'), 'good');
+    assert.equal(parseVoiceCommand('that was easy'), 'easy');
+    assert.equal(parseVoiceCommand('again'), 'again');
   });
 
   it('parses session commands', () => {
-    expect(parseVoiceCommand('pause')).toBe('pause');
-    expect(parseVoiceCommand('end session')).toBe('end');
+    assert.equal(parseVoiceCommand('pause'), 'pause');
+    assert.equal(parseVoiceCommand('end session'), 'end');
   });
 
   it('returns null for unrecognized input', () => {
-    expect(parseVoiceCommand('hello world')).toBeNull();
+    assert.equal(parseVoiceCommand('hello world'), null);
   });
 });

@@ -21,10 +21,29 @@ export const cards = sqliteTable('cards', {
   frontLocale: text('front_locale').notNull(),
   backLocale: text('back_locale').notNull(),
   tags: text('tags'),
+  contentFormat: text('content_format').notNull().default('plain'),
   suspended: integer('suspended').notNull().default(0),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
 });
+
+export const cardMedia = sqliteTable(
+  'card_media',
+  {
+    id: text('id').primaryKey(),
+    cardId: text('card_id')
+      .notNull()
+      .references(() => cards.id, { onDelete: 'cascade' }),
+    sourceName: text('source_name').notNull(),
+    localUri: text('local_uri').notNull(),
+    mediaType: text('media_type').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_card_media_card').on(table.cardId),
+    index('idx_card_media_source').on(table.cardId, table.sourceName),
+  ],
+);
 
 export const cardScheduling = sqliteTable(
   'card_scheduling',
@@ -118,5 +137,6 @@ export const appSettings = sqliteTable('app_settings', {
 
 export type DeckRow = typeof decks.$inferSelect;
 export type CardRow = typeof cards.$inferSelect;
+export type CardMediaRow = typeof cardMedia.$inferSelect;
 export type CardSchedulingRow = typeof cardScheduling.$inferSelect;
 export type ReviewLogRow = typeof reviewLogs.$inferSelect;

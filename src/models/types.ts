@@ -13,11 +13,15 @@ export interface Sm2DeckConfig {
   startingEase: number;
   minimumEase: number;
   maximumIntervalDays: number;
-  intervalModifier: number;
-  hardIntervalMultiplier: number;
+  hardMultiplier: number;
   easyBonus: number;
-  newIntervalOnLapse: number;
+  againEasePenalty: number;
+  hardEasePenalty: number;
+  easyEaseBonus: number;
+  newIntervalAfterLapse: number;
+  minimumIntervalAfterLapseDays: number;
   newCardsPerDay: number;
+  newCardsPerDayMode?: 'global' | 'custom';
   reviewsPerDay?: number;
 }
 
@@ -80,7 +84,7 @@ export interface IntervalPreview {
 
 export interface ReviewQueueItem {
   card: CardSchedulingState;
-  queueKind: 'due' | 'new';
+  queueKind: 'new' | 'learning' | 'review';
   previews?: Partial<Record<Rating, IntervalPreview>>;
 }
 
@@ -121,6 +125,18 @@ export interface Deck {
   updatedAt: Date;
 }
 
+export type ContentFormat = 'plain' | 'html';
+export type CardMediaType = 'image' | 'audio';
+
+export interface CardMedia {
+  id: string;
+  cardId: string;
+  sourceName: string;
+  localUri: string;
+  mediaType: CardMediaType;
+  createdAt: Date;
+}
+
 export interface Card {
   id: string;
   deckId: string;
@@ -128,6 +144,7 @@ export interface Card {
   backText: string;
   frontLocale: string;
   backLocale: string;
+  contentFormat: ContentFormat;
   suspended: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -139,9 +156,12 @@ export interface CardWithScheduling extends Card {
 
 export interface AppSettings {
   speechRate: number;
+  speechVolume: number;
   autoPlayFront: boolean;
   autoPlayBack: boolean;
   handsFreeMode: boolean;
   defaultFrontLocale: string;
   defaultBackLocale: string;
+  defaultNewCardsPerDay: number;
+  safetyNoticeAcknowledged: boolean;
 }

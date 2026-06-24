@@ -1,6 +1,5 @@
 import {
   CardSchedulingState,
-  CardPhase,
   DeckSchedulerConfig,
   IntervalPreview,
   Rating,
@@ -10,12 +9,11 @@ import {
 } from '@/src/models/types';
 import { SpacedRepetitionScheduler } from './SpacedRepetitionScheduler';
 import {
-  addDays,
   addMinutes,
   clamp,
-  daysBetween,
-  formatIntervalLabel,
+  formatAnkiRatingButtonLabel,
   minutesToDays,
+  scheduleReviewDue,
 } from './time';
 
 function getSm2State(card: CardSchedulingState): Sm2AlgorithmState {
@@ -47,18 +45,7 @@ function makeResult(
   };
 }
 
-function hardDelayMinutes(
-  stepIndex: number,
-  steps: number[],
-  config: Sm2DeckConfig,
-): number {
-  if (stepIndex === 0) return steps[0];
-  const againDelay = steps[0];
-  const goodDelay = steps[Math.min(stepIndex, steps.length - 1)];
-  return Math.round((againDelay + goodDelay) / 2);
-}
-
-function graduateFromLearning(
+function graduateToReview(
   card: CardSchedulingState,
   state: Sm2AlgorithmState,
   config: Sm2DeckConfig,
@@ -70,15 +57,45 @@ function graduateFromLearning(
     phase: 'review',
     reviewCount: card.reviewCount + 1,
     lastReviewedAt: now,
-    dueAt: addDays(now, intervalDays),
+    dueAt: scheduleReviewDue(now, intervalDays),
     algorithmState: {
       ...state,
       ease: state.ease || config.startingEase,
       intervalDays,
       learningStepIndex: 0,
+      lapseIntervalDays: undefined,
     },
     updatedAt: now,
   };
+}
+
+function clampLearningStepIndex(stepIndex: number, steps: number[]): number {
+  if (steps.length === 0) return 0;
+  return Math.max(0, Math.min(stepIndex, steps.length - 1));
+}
+
+function resolveStepDelayMinutes(stepIndex: number, steps: number[]): number {
+  if (steps.length === 0) return 1;
+  const clamped = clampLearningStepIndex(stepIndex, steps);
+  const delay = steps[clamped];
+  if (Number.isFinite(delay)) return delay;
+  const fallback = steps[0];
+  return Number.isFinite(fallback) ? fallback : 1;
+}
+
+function hardLearningDelayMinutes(stepIndex: number, steps: number[]): number {
+  const clamped = clampLearningStepIndex(stepIndex, steps);
+  if (clamped === 0) {
+    if (steps.length >= 2) {
+      const first = steps[0];
+      const second = steps[1];
+      if (Number.isFinite(first) && Number.isFinite(second)) {
+        return Math.round((first + second) / 2);
+      }
+    }
+    return Math.round(resolveStepDelayMinutes(0, steps) * 1.5);
+  }
+  return resolveStepDelayMinutes(clamped, steps);
 }
 
 function scheduleLearningSteps(
@@ -88,35 +105,42 @@ function scheduleLearningSteps(
   config: Sm2DeckConfig,
   state: Sm2AlgorithmState,
   steps: number[],
-  onGraduate: () => CardSchedulingState,
+  options: {
+    phase: 'learning' | 'relearning';
+    repeatHardStep?: boolean;
+    onGoodGraduate: () => CardSchedulingState;
+    onEasyGraduate: () => CardSchedulingState;
+  },
 ): ScheduleResult {
   const previous = cloneCard(card);
-  let stepIndex = state.learningStepIndex;
+  let stepIndex = clampLearningStepIndex(state.learningStepIndex, steps);
 
   if (rating === 'again') {
-    stepIndex = 0;
-    const dueAt = addMinutes(now, steps[0]);
+    const delayMin = resolveStepDelayMinutes(0, steps);
     const updated: CardSchedulingState = {
       ...card,
-      reviewCount: card.reviewCount + 1,
+      phase: options.phase,
       lastReviewedAt: now,
-      dueAt,
-      algorithmState: { ...state, learningStepIndex: stepIndex },
+      dueAt: addMinutes(now, delayMin),
+      algorithmState: { ...state, learningStepIndex: 0 },
       updatedAt: now,
     };
-    return makeResult(updated, previous, minutesToDays(steps[0]));
+    return makeResult(updated, previous, minutesToDays(delayMin));
   }
 
   if (rating === 'easy') {
-    const graduated = onGraduate();
-    return makeResult(graduated, previous, config.easyIntervalDays);
+    const graduated = options.onEasyGraduate();
+    const intervalDays = getSm2State(graduated).intervalDays;
+    return makeResult(graduated, previous, intervalDays);
   }
 
   if (rating === 'hard') {
-    const delayMin = hardDelayMinutes(stepIndex, steps, config);
+    const delayMin = options.repeatHardStep
+      ? resolveStepDelayMinutes(stepIndex, steps)
+      : hardLearningDelayMinutes(stepIndex, steps);
     const updated: CardSchedulingState = {
       ...card,
-      reviewCount: card.reviewCount + 1,
+      phase: options.phase,
       lastReviewedAt: now,
       dueAt: addMinutes(now, delayMin),
       algorithmState: { ...state, learningStepIndex: stepIndex },
@@ -128,14 +152,15 @@ function scheduleLearningSteps(
   // good
   stepIndex += 1;
   if (stepIndex >= steps.length) {
-    const graduated = onGraduate();
-    return makeResult(graduated, previous, config.graduatingIntervalDays);
+    const graduated = options.onGoodGraduate();
+    const intervalDays = getSm2State(graduated).intervalDays;
+    return makeResult(graduated, previous, intervalDays);
   }
 
-  const delayMin = steps[stepIndex];
+  const delayMin = resolveStepDelayMinutes(stepIndex, steps);
   const updated: CardSchedulingState = {
     ...card,
-    reviewCount: card.reviewCount + 1,
+    phase: options.phase,
     lastReviewedAt: now,
     dueAt: addMinutes(now, delayMin),
     algorithmState: { ...state, learningStepIndex: stepIndex },
@@ -191,42 +216,24 @@ export class Sm2Scheduler implements SpacedRepetitionScheduler {
     const state = getSm2State(card);
     const previous = cloneCard(card);
 
+    if (card.phase === 'new') {
+      const learningCard: CardSchedulingState = {
+        ...card,
+        phase: 'learning',
+        algorithmState: {
+          ...state,
+          ease: state.ease || sm2Config.startingEase,
+          learningStepIndex: 0,
+        },
+      };
+      return this.scheduleLearning(learningCard, rating, now, sm2Config);
+    }
+
     switch (card.phase) {
-      case 'new':
-        return this.startLearning(card, rating, now, sm2Config, state, previous);
       case 'learning':
-        return scheduleLearningSteps(
-          card,
-          rating,
-          now,
-          sm2Config,
-          state,
-          sm2Config.learningStepsMinutes,
-          () =>
-            graduateFromLearning(
-              { ...card, phase: 'learning' },
-              state,
-              sm2Config,
-              now,
-              sm2Config.graduatingIntervalDays,
-            ),
-        );
+        return this.scheduleLearning(card, rating, now, sm2Config);
       case 'relearning':
-        return scheduleLearningSteps(
-          card,
-          rating,
-          now,
-          sm2Config,
-          state,
-          sm2Config.relearningStepsMinutes,
-          () => {
-            const interval =
-              state.lapseIntervalDays && state.lapseIntervalDays > 0
-                ? state.lapseIntervalDays
-                : sm2Config.graduatingIntervalDays;
-            return graduateFromLearning(card, state, sm2Config, now, interval);
-          },
-        );
+        return this.scheduleRelearning(card, rating, now, sm2Config, state);
       case 'review':
         return this.scheduleReview(card, rating, now, sm2Config, state, previous);
       default:
@@ -234,40 +241,70 @@ export class Sm2Scheduler implements SpacedRepetitionScheduler {
     }
   }
 
-  private startLearning(
+  private scheduleLearning(
+    card: CardSchedulingState,
+    rating: Rating,
+    now: Date,
+    config: Sm2DeckConfig,
+  ): ScheduleResult {
+    const state = getSm2State(card);
+
+    return scheduleLearningSteps(
+      card,
+      rating,
+      now,
+      config,
+      state,
+      config.learningStepsMinutes,
+      {
+        phase: 'learning',
+        onGoodGraduate: () =>
+          graduateToReview(
+            { ...card, phase: 'learning' },
+            state,
+            config,
+            now,
+            config.graduatingIntervalDays,
+          ),
+        onEasyGraduate: () =>
+          graduateToReview(
+            { ...card, phase: 'learning' },
+            state,
+            config,
+            now,
+            config.easyIntervalDays,
+          ),
+      },
+    );
+  }
+
+  private scheduleRelearning(
     card: CardSchedulingState,
     rating: Rating,
     now: Date,
     config: Sm2DeckConfig,
     state: Sm2AlgorithmState,
-    previous: CardSchedulingState,
   ): ScheduleResult {
-    if (rating === 'easy') {
-      const graduated = graduateFromLearning(
-        { ...card, phase: 'learning' },
-        { ...state, ease: config.startingEase },
-        config,
-        now,
-        config.easyIntervalDays,
-      );
-      return makeResult(graduated, previous, config.easyIntervalDays);
-    }
-
-    const learningCard: CardSchedulingState = {
-      ...card,
-      phase: 'learning',
-      algorithmState: { ...state, ease: config.startingEase, learningStepIndex: 0 },
-    };
+    const lapseInterval = Math.max(
+      config.minimumIntervalAfterLapseDays,
+      state.intervalDays,
+    );
 
     return scheduleLearningSteps(
-      learningCard,
-      rating === 'again' ? 'again' : rating,
+      card,
+      rating,
       now,
       config,
-      { ...state, ease: config.startingEase, learningStepIndex: 0 },
-      config.learningStepsMinutes,
-      () =>
-        graduateFromLearning(learningCard, state, config, now, config.graduatingIntervalDays),
+      state,
+      config.relearningStepsMinutes,
+      {
+        phase: 'relearning',
+        repeatHardStep: true,
+        onGoodGraduate: () =>
+          graduateToReview(card, state, config, now, lapseInterval),
+        onEasyGraduate: () =>
+          graduateToReview(card, state, config, now, lapseInterval),
+      },
     );
   }
 
@@ -280,16 +317,17 @@ export class Sm2Scheduler implements SpacedRepetitionScheduler {
     previous: CardSchedulingState,
   ): ScheduleResult {
     let { ease, intervalDays } = state;
-    const daysLate = Math.max(0, daysBetween(card.dueAt, now));
 
     if (rating === 'again') {
-      const newEase = clamp(ease - 0.2, config.minimumEase, Infinity);
-      const lapseInterval = intervalDays * config.newIntervalOnLapse;
+      const newEase = clamp(ease - config.againEasePenalty, config.minimumEase, Infinity);
+      const lapseInterval = Math.max(
+        config.minimumIntervalAfterLapseDays,
+        Math.round(intervalDays * config.newIntervalAfterLapse),
+      );
       const updated: CardSchedulingState = {
         ...card,
         phase: 'relearning',
         lapseCount: card.lapseCount + 1,
-        reviewCount: card.reviewCount + 1,
         lastReviewedAt: now,
         dueAt: addMinutes(now, config.relearningStepsMinutes[0]),
         algorithmState: {
@@ -307,35 +345,29 @@ export class Sm2Scheduler implements SpacedRepetitionScheduler {
       );
     }
 
-    if (rating === 'hard') ease = clamp(ease - 0.15, config.minimumEase, Infinity);
-    if (rating === 'easy') ease = ease + 0.15;
-
-    const hardnessDivider = rating === 'hard' ? 4 : rating === 'good' ? 2 : 1;
-    const adjustedInterval = intervalDays + daysLate / hardnessDivider;
-
-    let multiplier =
-      rating === 'hard'
-        ? config.hardIntervalMultiplier
-        : rating === 'easy'
-          ? ease * config.easyBonus
-          : ease;
-
-    let nextInterval = Math.round(
-      adjustedInterval * multiplier * config.intervalModifier,
-    );
-    nextInterval = Math.min(nextInterval, config.maximumIntervalDays);
-    if (intervalDays > 0) {
-      nextInterval = Math.max(nextInterval, intervalDays + 1);
-    } else {
-      nextInterval = Math.max(nextInterval, 1);
+    if (rating === 'hard') {
+      ease = clamp(ease - config.hardEasePenalty, config.minimumEase, Infinity);
+    } else if (rating === 'easy') {
+      ease = ease + config.easyEaseBonus;
     }
+
+    let nextInterval: number;
+    if (rating === 'hard') {
+      nextInterval = Math.max(1, Math.round(intervalDays * config.hardMultiplier));
+    } else if (rating === 'good') {
+      nextInterval = Math.max(1, Math.round(intervalDays * ease));
+    } else {
+      nextInterval = Math.max(1, Math.round(intervalDays * ease * config.easyBonus));
+    }
+
+    nextInterval = Math.min(nextInterval, config.maximumIntervalDays);
 
     const updated: CardSchedulingState = {
       ...card,
       phase: 'review',
       reviewCount: card.reviewCount + 1,
       lastReviewedAt: now,
-      dueAt: addDays(now, nextInterval),
+      dueAt: scheduleReviewDue(now, nextInterval),
       algorithmState: { ease, intervalDays: nextInterval, learningStepIndex: 0 },
       updatedAt: now,
     };
@@ -352,14 +384,11 @@ export class Sm2Scheduler implements SpacedRepetitionScheduler {
 
     for (const rating of ratings) {
       const result = this.scheduleCard(cloneCard(card), rating, now, config);
-      const minutesUntilDue =
-        (result.nextDueAt.getTime() - now.getTime()) / (60 * 1000);
-      const days = result.nextIntervalDays;
       previews[rating] = {
         rating,
-        label: formatIntervalLabel(minutesUntilDue, days),
+        label: formatAnkiRatingButtonLabel(rating, result.nextDueAt, now),
         dueAt: result.nextDueAt,
-        intervalDays: days,
+        intervalDays: result.nextIntervalDays,
       };
     }
 

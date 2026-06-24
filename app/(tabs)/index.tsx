@@ -76,9 +76,14 @@ export default function HomeScreen() {
 
       <View style={styles.header}>
         <Text style={styles.sectionTitle}>Decks</Text>
-        <TouchableOpacity onPress={() => router.push('/deck/new')}>
-          <Ionicons name="add-circle" size={28} color={Colors.primary} />
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity onPress={() => router.push('/import/apkg')} style={styles.headerBtn}>
+            <Ionicons name="download-outline" size={26} color={Colors.accent} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.push('/deck/new')}>
+            <Ionicons name="add-circle" size={28} color={Colors.primary} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <FlatList
@@ -179,6 +184,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: Spacing.sm,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  headerBtn: {
+    padding: 2,
   },
   sectionTitle: {
     color: Colors.text,

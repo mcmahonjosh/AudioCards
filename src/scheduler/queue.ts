@@ -1,4 +1,5 @@
 import { CardSchedulingState, ReviewQueueItem } from '@/src/models/types';
+import { isLearningPhase } from './sessionQueue';
 
 export function isNewCard(card: CardSchedulingState): boolean {
   return card.phase === 'new' && card.reviewCount === 0;
@@ -26,6 +27,10 @@ export function getNewCardsForSession(
   return cards.filter(isNewCard).slice(0, remaining);
 }
 
+function queueKindForCard(card: CardSchedulingState): 'learning' | 'review' {
+  return isLearningPhase(card.phase) ? 'learning' : 'review';
+}
+
 export function buildReviewQueue(
   allCards: CardSchedulingState[],
   now: Date,
@@ -41,7 +46,7 @@ export function buildReviewQueue(
 
   const queue: ReviewQueueItem[] = cappedDue.map((card) => ({
     card,
-    queueKind: 'due' as const,
+    queueKind: queueKindForCard(card),
   }));
 
   if (options.includeNewCards) {

@@ -2,6 +2,11 @@ export interface ImportSummary {
   created: number;
   skipped: number;
   errors: string[];
+  decksCreated?: number;
+  mediaFiles?: number;
+  schedulingMapped?: number;
+  revlogImported?: number;
+  reversedSkipped?: number;
 }
 
 export interface CsvRow {
@@ -21,54 +26,87 @@ export function parseCsvContent(content: string): { rows: CsvRow[]; errors: stri
     return { rows, errors: ['File is empty'] };
   }
 
-  const header = lines[0].split(',').map((h) => h.trim().toLowerCase().replace(/"/g, ''));
+  const header = splitRowColumns(lines[0], ',', true).map((h) =>
+    unquoteCsvField(h).toLowerCase(),
+  );
   const frontIdx = header.indexOf('front');
   const backIdx = header.indexOf('back');
 
-  if (frontIdx === -1 || backIdx === -1) {
-    // Try tab-separated or simple two-column without header
-    if (lines.length >= 1 && !lines[0].includes(',')) {
-      for (let i = 0; i < lines.length; i++) {
-        const parts = lines[i].split('\t');
-        if (parts.length >= 2) {
-          rows.push({ front: parts[0].trim(), back: parts[1].trim() });
-        }
+  if (frontIdx >= 0 && backIdx >= 0) {
+    const tagsIdx = header.indexOf('tags');
+    const frontLocaleIdx = header.indexOf('front_locale');
+    const backLocaleIdx = header.indexOf('back_locale');
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseCsvLine(lines[i]);
+      const front = unquoteCsvField(cols[frontIdx] ?? '');
+      const back = unquoteCsvField(cols[backIdx] ?? '');
+
+      if (!front || !back) {
+        errors.push(`Row ${i + 1}: missing front or back text`);
+        continue;
       }
-      return { rows, errors };
+
+      rows.push({
+        front,
+        back,
+        tags: tagsIdx >= 0 ? unquoteCsvField(cols[tagsIdx] ?? '') : undefined,
+        frontLocale:
+          frontLocaleIdx >= 0 ? unquoteCsvField(cols[frontLocaleIdx] ?? '') : undefined,
+        backLocale:
+          backLocaleIdx >= 0 ? unquoteCsvField(cols[backLocaleIdx] ?? '') : undefined,
+      });
     }
-    errors.push('CSV must have "front" and "back" columns');
+
     return { rows, errors };
   }
 
-  const tagsIdx = header.indexOf('tags');
-  const frontLocaleIdx = header.indexOf('front_locale');
-  const backLocaleIdx = header.indexOf('back_locale');
+  const useTab = lines.every((line) => !line.includes(',') && line.includes('\t'));
 
-  for (let i = 1; i < lines.length; i++) {
-    const cols = parseCsvLine(lines[i]);
-    const front = cols[frontIdx]?.replace(/^"|"$/g, '').trim();
-    const back = cols[backIdx]?.replace(/^"|"$/g, '').trim();
+  for (let i = 0; i < lines.length; i++) {
+    const cols = useTab ? lines[i].split('\t') : parseCsvLine(lines[i]);
+
+    if (cols.length < 2) {
+      errors.push(`Row ${i + 1}: expected at least 2 columns`);
+      continue;
+    }
+
+    const front = unquoteCsvField(cols[0] ?? '');
+    const back = unquoteCsvField(cols[1] ?? '');
 
     if (!front || !back) {
       errors.push(`Row ${i + 1}: missing front or back text`);
       continue;
     }
 
-    rows.push({
-      front,
-      back,
-      tags: tagsIdx >= 0 ? cols[tagsIdx]?.replace(/^"|"$/g, '').trim() : undefined,
-      frontLocale:
-        frontLocaleIdx >= 0 ? cols[frontLocaleIdx]?.replace(/^"|"$/g, '').trim() : undefined,
-      backLocale:
-        backLocaleIdx >= 0 ? cols[backLocaleIdx]?.replace(/^"|"$/g, '').trim() : undefined,
-    });
+    rows.push({ front, back });
   }
 
   return { rows, errors };
 }
 
+function unquoteCsvField(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).replace(/""/g, '"').trim();
+  }
+  return trimmed;
+}
+
 function parseCsvLine(line: string): string[] {
+  return splitRowColumns(line, ',', true);
+}
+
+/** Split a row by delimiter; quote-aware when delimiter is comma. */
+export function splitRowColumns(
+  line: string,
+  delimiter: string,
+  quoteAware: boolean,
+): string[] {
+  if (!quoteAware || delimiter !== ',') {
+    return line.split(delimiter);
+  }
+
   const result: string[] = [];
   let current = '';
   let inQuotes = false;
@@ -77,7 +115,7 @@ function parseCsvLine(line: string): string[] {
     const char = line[i];
     if (char === '"') {
       inQuotes = !inQuotes;
-    } else if (char === ',' && !inQuotes) {
+    } else if (char === delimiter && !inQuotes) {
       result.push(current);
       current = '';
     } else {

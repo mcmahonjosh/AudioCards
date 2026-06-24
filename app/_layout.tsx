@@ -1,7 +1,13 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { LogBox } from 'react-native';
 import { AppProvider } from '@/src/context/AppContext';
 import { Colors } from '@/constants/Colors';
+
+LogBox.ignoreLogs([
+  'TNodeChildrenRenderer: Support for defaultProps',
+  'Support for defaultProps will be removed from function components',
+]);
 
 export default function RootLayout() {
   return (
@@ -21,6 +27,7 @@ export default function RootLayout() {
         <Stack.Screen name="deck/new" options={{ title: 'New Deck', presentation: 'modal' }} />
         <Stack.Screen name="card/new" options={{ title: 'Add Card', presentation: 'modal' }} />
         <Stack.Screen name="card/[id]/edit" options={{ title: 'Edit Card', presentation: 'modal' }} />
+        <Stack.Screen name="import/apkg" options={{ title: 'Import Anki Deck' }} />
       </Stack>
     </AppProvider>
   );

@@ -10,7 +10,9 @@ import {
 import { router, useLocalSearchParams } from 'expo-router';
 import { Colors, Spacing, FontSize } from '@/constants/Colors';
 import { Button } from '@/src/components/Button';
-import { LocaleButton, LocalePicker } from '@/src/components/LocalePicker';
+import { LocaleButton } from '@/src/components/LocalePicker';
+import { VoicePicker } from '@/src/components/VoicePicker';
+import { CardContentRenderer } from '@/src/components/card/CardContentRenderer';
 import { getCardById, updateCard, deleteCard } from '@/src/db/repositories';
 import { ttsService } from '@/src/services/tts/TtsService';
 import { useAppContext } from '@/src/context/AppContext';
@@ -22,6 +24,7 @@ export default function EditCardScreen() {
   const [backText, setBackText] = useState('');
   const [frontLocale, setFrontLocale] = useState('en-US');
   const [backLocale, setBackLocale] = useState('es-MX');
+  const [contentFormat, setContentFormat] = useState<'plain' | 'html'>('plain');
   const [picker, setPicker] = useState<'front' | 'back' | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -33,15 +36,22 @@ export default function EditCardScreen() {
           setBackText(card.backText);
           setFrontLocale(card.frontLocale);
           setBackLocale(card.backLocale);
+          setContentFormat(card.contentFormat);
         }
       });
     }
   }, [id]);
 
   const previewFront = () =>
-    ttsService.speak(frontText || 'Preview', frontLocale, { rate: settings.speechRate });
+    ttsService.speak(frontText || 'Preview', frontLocale, {
+      rate: settings.speechRate,
+      volume: settings.speechVolume,
+    });
   const previewBack = () =>
-    ttsService.speak(backText || 'Preview', backLocale, { rate: settings.speechRate });
+    ttsService.speak(backText || 'Preview', backLocale, {
+      rate: settings.speechRate,
+      volume: settings.speechVolume,
+    });
 
   const handleSave = async () => {
     if (!id || !frontText.trim() || !backText.trim()) {
@@ -55,6 +65,7 @@ export default function EditCardScreen() {
         backText: backText.trim(),
         frontLocale,
         backLocale,
+        contentFormat,
       });
       router.back();
     } catch {
@@ -88,8 +99,19 @@ export default function EditCardScreen() {
         value={frontText}
         onChangeText={setFrontText}
         multiline
+        textAlignVertical="top"
         placeholderTextColor={Colors.textMuted}
       />
+      {frontText.trim().length > 0 && (
+        <View style={styles.previewBox}>
+          <Text style={styles.previewLabel}>Preview</Text>
+          <CardContentRenderer
+            text={frontText}
+            contentFormat={contentFormat}
+            maxHeight={160}
+          />
+        </View>
+      )}
       <LocaleButton locale={frontLocale} label="Front Language" onPress={() => setPicker('front')} />
       <Button title="Preview Front Audio" variant="secondary" onPress={previewFront} style={styles.previewBtn} />
 
@@ -99,16 +121,27 @@ export default function EditCardScreen() {
         value={backText}
         onChangeText={setBackText}
         multiline
+        textAlignVertical="top"
         placeholderTextColor={Colors.textMuted}
       />
+      {backText.trim().length > 0 && (
+        <View style={styles.previewBox}>
+          <Text style={styles.previewLabel}>Preview</Text>
+          <CardContentRenderer
+            text={backText}
+            contentFormat={contentFormat}
+            maxHeight={160}
+          />
+        </View>
+      )}
       <LocaleButton locale={backLocale} label="Back Language" onPress={() => setPicker('back')} />
       <Button title="Preview Back Audio" variant="secondary" onPress={previewBack} style={styles.previewBtn} />
 
       <Button title="Save Changes" onPress={handleSave} loading={loading} style={styles.saveBtn} />
       <Button title="Delete Card" variant="again" onPress={handleDelete} />
 
-      <LocalePicker visible={picker === 'front'} selected={frontLocale} onSelect={setFrontLocale} onClose={() => setPicker(null)} title="Front Language" />
-      <LocalePicker visible={picker === 'back'} selected={backLocale} onSelect={setBackLocale} onClose={() => setPicker(null)} title="Back Language" />
+      <VoicePicker visible={picker === 'front'} selectedLocale={frontLocale} onSelect={setFrontLocale} onClose={() => setPicker(null)} title="Front Language" />
+      <VoicePicker visible={picker === 'back'} selectedLocale={backLocale} onSelect={setBackLocale} onClose={() => setPicker(null)} title="Back Language" />
     </ScrollView>
   );
 }
@@ -125,7 +158,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  multiline: { minHeight: 80, textAlignVertical: 'top' },
+  multiline: { minHeight: 160, textAlignVertical: 'top' },
+  previewBox: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    padding: Spacing.md,
+    marginTop: Spacing.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  previewLabel: {
+    color: Colors.textMuted,
+    fontSize: FontSize.sm,
+    marginBottom: Spacing.sm,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
   previewBtn: { marginTop: Spacing.sm, marginBottom: Spacing.md },
   saveBtn: { marginTop: Spacing.lg, marginBottom: Spacing.md },
 });

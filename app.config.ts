@@ -58,5 +58,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     eas: {
       projectId: '2405c646-aa9c-4406-a60d-bddbe14310d3',
     },
+    privacyPolicyUrl: 'https://mcmahonjosh.github.io/AudioCards/privacy',
+    supportUrl: 'https://github.com/mcmahonjosh/AudioCards/issues',
   },
 });

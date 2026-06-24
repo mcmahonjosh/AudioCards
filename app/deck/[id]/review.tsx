@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Alert } from 'react-native';
+import { View, Text, StyleSheet, Alert, ScrollView } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Colors, Spacing, FontSize } from '@/constants/Colors';
 import { Button } from '@/src/components/Button';
@@ -8,12 +8,17 @@ import { RatingButtons } from '@/src/components/RatingButtons';
 import { VoiceStatusBar } from '@/src/components/VoiceStatusBar';
 import { ReviewSessionController } from '@/src/review/ReviewSessionController';
 import { ReviewPhase, VoiceActivity } from '@/src/review/types';
-import { Rating, IntervalPreview, CardWithScheduling } from '@/src/models/types';
+import { Rating, IntervalPreview, CardWithScheduling, CardMedia } from '@/src/models/types';
+import { SessionCounts } from '@/src/scheduler/sessionQueue';
 import { useAppContext } from '@/src/context/AppContext';
+import { getMediaByCardId } from '@/src/db/repositories';
+import { cardMediaService } from '@/src/services/media/CardMediaService';
 import {
   useSpeechRecognitionEvent,
   voiceCommandService,
 } from '@/src/services/voice/VoiceCommandService';
+
+const EMPTY_COUNTS: SessionCounts = { new: 0, learning: 0, review: 0 };
 
 export default function ReviewScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -22,11 +27,11 @@ export default function ReviewScreen() {
 
   const [phase, setPhase] = useState<ReviewPhase>('loading');
   const [voiceActivity, setVoiceActivity] = useState<VoiceActivity>('idle');
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [totalCards, setTotalCards] = useState(0);
+  const [sessionCounts, setSessionCounts] = useState<SessionCounts>(EMPTY_COUNTS);
   const [cardsReviewed, setCardsReviewed] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [currentCard, setCurrentCard] = useState<CardWithScheduling | null>(null);
+  const [cardMedia, setCardMedia] = useState<CardMedia[]>([]);
   const [previews, setPreviews] = useState<Partial<Record<Rating, IntervalPreview>> | null>(null);
 
   useSpeechRecognitionEvent('result', (event) => {
@@ -45,7 +50,9 @@ export default function ReviewScreen() {
     const controller = new ReviewSessionController({
       deckId: id,
       includeNewCards: true,
+      defaultNewCardsPerDay: settings.defaultNewCardsPerDay,
       speechRate: settings.speechRate,
+      speechVolume: settings.speechVolume,
       autoPlayFront: settings.autoPlayFront,
       autoPlayBack: settings.autoPlayBack,
       handsFreeMode: settings.handsFreeMode,
@@ -56,8 +63,7 @@ export default function ReviewScreen() {
     const unsub = controller.onStateChange((state) => {
       setPhase(state.phase);
       setVoiceActivity(state.voiceActivity);
-      setCurrentIndex(state.currentIndex);
-      setTotalCards(state.totalCards);
+      setSessionCounts(state.sessionCounts);
       setCardsReviewed(state.cardsReviewed);
       setIsFlipped(state.isFlipped);
       setCurrentCard(state.currentCard);
@@ -75,6 +81,14 @@ export default function ReviewScreen() {
     };
   }, [id, settings]);
 
+  useEffect(() => {
+    if (!currentCard) {
+      setCardMedia([]);
+      return;
+    }
+    getMediaByCardId(currentCard.id).then(setCardMedia);
+  }, [currentCard?.id]);
+
   const handleFlip = () => controllerRef.current?.flip();
   const handleRepeat = () => controllerRef.current?.repeat();
   const handlePause = () => controllerRef.current?.pause();
@@ -91,7 +105,16 @@ export default function ReviewScreen() {
       },
     ]);
   };
-  const handleRate = (rating: Rating) => controllerRef.current?.rate(rating);
+  const handleRate = async (rating: Rating) => {
+    try {
+      await controllerRef.current?.rate(rating);
+    } catch {
+      Alert.alert('Error', 'Could not save your rating. Please try again.');
+    }
+  };
+
+  const totalInQueue =
+    sessionCounts.new + sessionCounts.learning + sessionCounts.review;
 
   if (phase === 'loading') {
     return (
@@ -106,7 +129,7 @@ export default function ReviewScreen() {
       <View style={styles.center}>
         <Text style={styles.completeTitle}>Session Complete!</Text>
         <Text style={styles.completeSubtitle}>
-          Reviewed {cardsReviewed} of {totalCards} cards
+          Reviewed {cardsReviewed} card{cardsReviewed === 1 ? '' : 's'} today
         </Text>
         <Button title="Done" onPress={() => router.back()} style={styles.doneBtn} />
       </View>
@@ -123,42 +146,65 @@ export default function ReviewScreen() {
       ? currentCard.backLocale
       : currentCard.frontLocale
     : '';
+  const displayFormat = currentCard?.contentFormat ?? 'plain';
+
+  const handlePlaySound = async (filename: string) => {
+    if (!currentCard) return;
+    await cardMediaService.playMediaByFilename(currentCard.id, filename);
+  };
 
   return (
     <View style={styles.container}>
-      <View style={styles.progress}>
-        <Text style={styles.progressText}>
-          {currentIndex + 1} / {totalCards}
-        </Text>
-        <Text style={styles.reviewedText}>{cardsReviewed} reviewed</Text>
+      <View style={styles.header}>
+        <View style={styles.queueCounts}>
+          <QueueCount label="New" value={sessionCounts.new} color={Colors.primary} />
+          <QueueCount label="Learning" value={sessionCounts.learning} color={Colors.hard} />
+          <QueueCount label="Review" value={sessionCounts.review} color={Colors.accent} />
+        </View>
+
+        <View style={styles.progress}>
+          <Text style={styles.progressText}>{totalInQueue} left in session</Text>
+          <Text style={styles.reviewedText}>{cardsReviewed} reviewed</Text>
+        </View>
+
+        <VoiceStatusBar activity={voiceActivity} handsFreeMode={settings.handsFreeMode} />
       </View>
 
-      <VoiceStatusBar activity={voiceActivity} handsFreeMode={settings.handsFreeMode} />
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.cardArea}>
+          {currentCard && (
+            <CardDisplay
+              text={displayText}
+              contentFormat={displayFormat}
+              media={cardMedia}
+              side={isFlipped ? 'back' : 'front'}
+              locale={displayLocale}
+              isFlipped={isFlipped}
+              phase={currentCard.scheduling.phase}
+              onPlaySound={handlePlaySound}
+            />
+          )}
+        </View>
 
-      <View style={styles.cardArea}>
-        {currentCard && (
-          <CardDisplay
-            text={displayText}
-            side={isFlipped ? 'back' : 'front'}
-            locale={displayLocale}
-            isFlipped={isFlipped}
-          />
+        {phase === 'paused' && (
+          <Text style={styles.pausedText}>Paused — say "resume" or tap Resume</Text>
         )}
-      </View>
 
-      {phase === 'paused' && (
-        <Text style={styles.pausedText}>Paused — say "resume" or tap Resume</Text>
-      )}
+        {!isFlipped && phase !== 'paused' && (
+          <Button title="Flip" onPress={handleFlip} style={styles.flipBtn} />
+        )}
 
-      {!isFlipped && phase !== 'paused' && (
-        <Button title="Flip" onPress={handleFlip} style={styles.flipBtn} />
-      )}
-
-      <RatingButtons
-        visible={isFlipped && phase !== 'paused'}
-        onRate={handleRate}
-        previews={previews}
-      />
+        <RatingButtons
+          visible={isFlipped && phase !== 'paused'}
+          onRate={handleRate}
+          previews={previews}
+        />
+      </ScrollView>
 
       <View style={styles.toolbar}>
         <Button title="Repeat" variant="secondary" onPress={handleRepeat} style={styles.toolBtn} />
@@ -173,19 +219,74 @@ export default function ReviewScreen() {
   );
 }
 
+function QueueCount({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: number;
+  color: string;
+}) {
+  return (
+    <View style={styles.queueCount}>
+      <Text style={[styles.queueCountValue, { color }]}>{value}</Text>
+      <Text style={styles.queueCountLabel}>{label}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background, padding: Spacing.md },
+  container: { flex: 1, backgroundColor: Colors.background },
   center: { flex: 1, backgroundColor: Colors.background, justifyContent: 'center', alignItems: 'center', padding: Spacing.lg },
   loadingText: { color: Colors.textMuted, fontSize: FontSize.md },
   completeTitle: { color: Colors.text, fontSize: FontSize.xxl, fontWeight: '700', marginBottom: Spacing.sm },
   completeSubtitle: { color: Colors.textMuted, fontSize: FontSize.md, marginBottom: Spacing.lg },
   doneBtn: { minWidth: 200 },
+  header: {
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.sm,
+  },
+  queueCounts: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: Spacing.sm,
+    paddingVertical: Spacing.sm,
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  queueCount: { alignItems: 'center', minWidth: 72 },
+  queueCountValue: { fontSize: FontSize.xl, fontWeight: '700' },
+  queueCountLabel: { color: Colors.textMuted, fontSize: FontSize.sm, marginTop: 2 },
   progress: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: Spacing.sm },
   progressText: { color: Colors.text, fontSize: FontSize.md, fontWeight: '600' },
   reviewedText: { color: Colors.textMuted, fontSize: FontSize.sm },
-  cardArea: { flex: 1, justifyContent: 'center', marginVertical: Spacing.md },
+  scroll: { flex: 1 },
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: Spacing.md,
+    paddingBottom: Spacing.md,
+  },
+  cardArea: {
+    flexGrow: 1,
+    minHeight: 160,
+    justifyContent: 'center',
+    marginVertical: Spacing.md,
+  },
   pausedText: { color: Colors.hard, textAlign: 'center', marginBottom: Spacing.sm },
   flipBtn: { marginBottom: Spacing.md },
-  toolbar: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md },
+  toolbar: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    backgroundColor: Colors.background,
+  },
   toolBtn: { flex: 1, paddingVertical: Spacing.sm },
 });

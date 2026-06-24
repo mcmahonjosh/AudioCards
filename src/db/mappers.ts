@@ -20,7 +20,49 @@ import type {
 } from './schema';
 
 export function parseDeckConfig(json: string): DeckSchedulerConfig {
-  return JSON.parse(json) as DeckSchedulerConfig;
+  const parsed = JSON.parse(json) as Record<string, unknown>;
+  if (parsed.algorithm === 'fsrs') {
+    return parsed as DeckSchedulerConfig;
+  }
+  return normalizeSm2DeckConfig(parsed);
+}
+
+/** Merge saved deck config with current defaults; map legacy field names. */
+export function normalizeSm2DeckConfig(raw: Record<string, unknown>): Sm2DeckConfig {
+  const base = createDefaultDeckConfig();
+  const partial = raw as Partial<Sm2DeckConfig> & {
+    hardIntervalMultiplier?: number;
+    newIntervalOnLapse?: number;
+    intervalModifier?: number;
+  };
+
+  return {
+    ...base,
+    ...partial,
+    algorithm: 'sm2',
+    hardMultiplier:
+      partial.hardMultiplier ??
+      partial.hardIntervalMultiplier ??
+      base.hardMultiplier,
+    newIntervalAfterLapse:
+      partial.newIntervalAfterLapse ??
+      partial.newIntervalOnLapse ??
+      base.newIntervalAfterLapse,
+    againEasePenalty: partial.againEasePenalty ?? base.againEasePenalty,
+    hardEasePenalty: partial.hardEasePenalty ?? base.hardEasePenalty,
+    easyEaseBonus: partial.easyEaseBonus ?? base.easyEaseBonus,
+    minimumIntervalAfterLapseDays:
+      partial.minimumIntervalAfterLapseDays ?? base.minimumIntervalAfterLapseDays,
+    learningStepsMinutes: base.learningStepsMinutes,
+    relearningStepsMinutes: base.relearningStepsMinutes,
+    newCardsPerDayMode: partial.newCardsPerDayMode ?? 'global',
+    newCardsPerDay: clampNewCardsPerDay(partial.newCardsPerDay ?? base.newCardsPerDay),
+  };
+}
+
+function clampNewCardsPerDay(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(9999, Math.round(value)));
 }
 
 export function serializeDeckConfig(config: DeckSchedulerConfig): string {
@@ -48,14 +90,28 @@ export function rowToCard(row: CardRow): Card {
     backText: row.backText,
     frontLocale: row.frontLocale,
     backLocale: row.backLocale,
+    contentFormat: (row.contentFormat as Card['contentFormat']) ?? 'plain',
     suspended: row.suspended === 1,
     createdAt: new Date(row.createdAt),
     updatedAt: new Date(row.updatedAt),
   };
 }
 
+function clampStoredLearningStepIndex(phase: CardPhase, stepIndex: number): number {
+  if (phase === 'learning') {
+    const maxIndex = DEFAULT_SM2_CONFIG.learningStepsMinutes.length - 1;
+    return Math.max(0, Math.min(stepIndex, maxIndex));
+  }
+  if (phase === 'relearning') {
+    const maxIndex = DEFAULT_SM2_CONFIG.relearningStepsMinutes.length - 1;
+    return Math.max(0, Math.min(stepIndex, maxIndex));
+  }
+  return stepIndex;
+}
+
 export function rowToScheduling(row: CardSchedulingRow): CardSchedulingState {
   const algorithm = row.algorithm as CardSchedulingState['algorithm'];
+  const phase = row.phase as CardPhase;
   let algorithmState: Sm2AlgorithmState | FsrsAlgorithmState;
 
   if (algorithm === 'fsrs') {
@@ -69,7 +125,7 @@ export function rowToScheduling(row: CardSchedulingRow): CardSchedulingState {
     algorithmState = {
       ease: row.ease ?? DEFAULT_SM2_CONFIG.startingEase,
       intervalDays: row.intervalDays,
-      learningStepIndex: row.learningStepIndex,
+      learningStepIndex: clampStoredLearningStepIndex(phase, row.learningStepIndex),
       lapseIntervalDays: row.lapseIntervalDays ?? undefined,
     };
   }
@@ -77,7 +133,7 @@ export function rowToScheduling(row: CardSchedulingRow): CardSchedulingState {
   return {
     cardId: row.cardId,
     deckId: row.deckId,
-    phase: row.phase as CardPhase,
+    phase,
     dueAt: new Date(row.dueAt),
     reviewCount: row.reviewCount,
     lapseCount: row.lapseCount,
@@ -170,8 +226,8 @@ export function localDateString(date: Date = new Date()): string {
   return `${y}-${m}-${d}`;
 }
 
-export function endOfToday(): Date {
-  const d = new Date();
+export function endOfToday(now: Date = new Date()): Date {
+  const d = new Date(now);
   d.setHours(23, 59, 59, 999);
   return d;
 }

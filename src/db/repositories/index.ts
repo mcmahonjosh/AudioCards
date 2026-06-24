@@ -4,6 +4,7 @@ import {
   decks,
   cards,
   cardScheduling,
+  cardMedia,
   reviewLogs,
   dailyCounters,
   appSettings,
@@ -22,6 +23,9 @@ import {
 import {
   Deck,
   Card,
+  CardMedia,
+  CardMediaType,
+  ContentFormat,
   CardSchedulingState,
   CardWithScheduling,
   ReviewLog,
@@ -29,6 +33,7 @@ import {
   Sm2DeckConfig,
 } from '@/src/models/types';
 import { getScheduler } from '@/src/scheduler/schedulerFactory';
+import { normalizeSpeechVolume } from '@/src/services/tts/volumeUtils';
 
 export async function getAllDecks(): Promise<Deck[]> {
   const rows = await getDb().select().from(decks).orderBy(asc(decks.name));
@@ -64,12 +69,23 @@ export async function createDeck(input: {
 
 export async function updateDeck(
   id: string,
-  input: Partial<{ name: string; frontLocale: string; backLocale: string }>,
+  input: Partial<{ name: string; frontLocale: string; backLocale: string; config: Sm2DeckConfig }>,
 ): Promise<void> {
-  await getDb()
-    .update(decks)
-    .set({ ...input, updatedAt: Date.now() })
-    .where(eq(decks.id, id));
+  const update: Record<string, unknown> = { updatedAt: Date.now() };
+  if (input.name !== undefined) update.name = input.name;
+  if (input.frontLocale !== undefined) update.frontLocale = input.frontLocale;
+  if (input.backLocale !== undefined) update.backLocale = input.backLocale;
+  if (input.config !== undefined) {
+    update.configJson = serializeDeckConfig(input.config);
+  }
+  await getDb().update(decks).set(update).where(eq(decks.id, id));
+}
+
+export async function updateDeckConfig(
+  deckId: string,
+  config: Sm2DeckConfig,
+): Promise<void> {
+  await updateDeck(deckId, { config });
 }
 
 export async function deleteDeck(id: string): Promise<void> {
@@ -97,6 +113,10 @@ export async function createCard(input: {
   frontLocale: string;
   backLocale: string;
   tags?: string;
+  contentFormat?: ContentFormat;
+  suspended?: boolean;
+  scheduling?: CardSchedulingState;
+  media?: { sourceName: string; localUri: string; mediaType: CardMediaType }[];
 }): Promise<CardWithScheduling> {
   const now = Date.now();
   const id = generateId();
@@ -111,25 +131,30 @@ export async function createCard(input: {
     frontLocale: input.frontLocale,
     backLocale: input.backLocale,
     tags: input.tags ?? null,
-    suspended: 0,
+    contentFormat: input.contentFormat ?? 'plain',
+    suspended: input.suspended ? 1 : 0,
     createdAt: now,
     updatedAt: now,
   };
 
   const scheduler = getScheduler(deck.algorithm);
-  const scheduling = scheduler.createInitialState(
-    id,
-    input.deckId,
-    new Date(now),
-    deck.config,
-  );
+  const scheduling: CardSchedulingState = input.scheduling
+    ? { ...input.scheduling, cardId: id, deckId: input.deckId }
+    : scheduler.createInitialState(id, input.deckId, new Date(now), deck.config);
   const schedRow = {
     ...schedulingToRow(scheduling, now),
-    createdAt: now,
+    createdAt: scheduling.createdAt.getTime(),
   };
 
   await getDb().insert(cards).values(cardRow);
   await getDb().insert(cardScheduling).values(schedRow);
+
+  if (input.media?.length) {
+    await insertCardMedia(
+      id,
+      input.media.map((m) => ({ ...m, id: generateId(), createdAt: now })),
+    );
+  }
 
   return { ...rowToCard(cardRow), scheduling };
 }
@@ -142,6 +167,7 @@ export async function updateCard(
     frontLocale: string;
     backLocale: string;
     tags: string;
+    contentFormat: ContentFormat;
     suspended: boolean;
   }>,
 ): Promise<void> {
@@ -151,12 +177,50 @@ export async function updateCard(
   if (input.frontLocale !== undefined) update.frontLocale = input.frontLocale;
   if (input.backLocale !== undefined) update.backLocale = input.backLocale;
   if (input.tags !== undefined) update.tags = input.tags;
+  if (input.contentFormat !== undefined) update.contentFormat = input.contentFormat;
   if (input.suspended !== undefined) update.suspended = input.suspended ? 1 : 0;
   await getDb().update(cards).set(update).where(eq(cards.id, id));
 }
 
 export async function deleteCard(id: string): Promise<void> {
   await getDb().delete(cards).where(eq(cards.id, id));
+}
+
+export async function insertCardMedia(
+  cardId: string,
+  items: { id: string; sourceName: string; localUri: string; mediaType: CardMediaType; createdAt: number }[],
+): Promise<void> {
+  if (items.length === 0) return;
+  await getDb().insert(cardMedia).values(
+    items.map((m) => ({
+      id: m.id,
+      cardId,
+      sourceName: m.sourceName,
+      localUri: m.localUri,
+      mediaType: m.mediaType,
+      createdAt: m.createdAt,
+    })),
+  );
+}
+
+export async function getMediaByCardId(cardId: string): Promise<CardMedia[]> {
+  const rows = await getDb()
+    .select()
+    .from(cardMedia)
+    .where(eq(cardMedia.cardId, cardId));
+  return rows.map((row) => ({
+    id: row.id,
+    cardId: row.cardId,
+    sourceName: row.sourceName,
+    localUri: row.localUri,
+    mediaType: row.mediaType as CardMediaType,
+    createdAt: new Date(row.createdAt),
+  }));
+}
+
+export async function findDeckByName(name: string): Promise<Deck | null> {
+  const rows = await getDb().select().from(decks).where(eq(decks.name, name)).limit(1);
+  return rows[0] ? rowToDeck(rows[0]) : null;
 }
 
 export async function getSchedulingByCardId(
@@ -328,12 +392,24 @@ export async function getAppSettings(): Promise<AppSettings> {
 
   return {
     speechRate: map.speechRate ? parseFloat(map.speechRate) : defaults.speechRate,
+    speechVolume: map.speechVolume
+      ? normalizeSpeechVolume(parseFloat(map.speechVolume))
+      : defaults.speechVolume,
     autoPlayFront: map.autoPlayFront ? map.autoPlayFront === 'true' : defaults.autoPlayFront,
     autoPlayBack: map.autoPlayBack ? map.autoPlayBack === 'true' : defaults.autoPlayBack,
     handsFreeMode: map.handsFreeMode ? map.handsFreeMode === 'true' : defaults.handsFreeMode,
     defaultFrontLocale: map.defaultFrontLocale ?? defaults.defaultFrontLocale,
     defaultBackLocale: map.defaultBackLocale ?? defaults.defaultBackLocale,
+    defaultNewCardsPerDay: map.defaultNewCardsPerDay
+      ? clampNewCardsPerDay(parseInt(map.defaultNewCardsPerDay, 10))
+      : defaults.defaultNewCardsPerDay,
+    safetyNoticeAcknowledged: map.safetyNoticeAcknowledged === 'true',
   };
+}
+
+function clampNewCardsPerDay(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(9999, Math.round(value)));
 }
 
 export async function saveAppSettings(settings: Partial<AppSettings>): Promise<void> {
@@ -362,6 +438,17 @@ export async function getDeckConfig(deckId: string): Promise<Sm2DeckConfig> {
   return deck.config as Sm2DeckConfig;
 }
 
+export interface ReviewLogDetailedRow {
+  reviewedAt: number;
+  rating: string;
+  deckId: string;
+  cardId: string;
+  phaseBefore: string;
+  intervalDaysBefore: number;
+  easeBefore: number | null;
+  reviewDurationMs: number | null;
+}
+
 export async function getReviewLogsSince(
   deckId: string | null,
   since: Date,
@@ -378,6 +465,82 @@ export async function getReviewLogsSince(
     .from(reviewLogs)
     .where(and(...conditions))
     .orderBy(asc(reviewLogs.reviewedAt));
+}
+
+export async function getReviewLogsDetailedSince(
+  deckId: string | null,
+  since: Date,
+): Promise<ReviewLogDetailedRow[]> {
+  const conditions = [gte(reviewLogs.reviewedAt, since.getTime())];
+  if (deckId) conditions.push(eq(reviewLogs.deckId, deckId));
+
+  return getDb()
+    .select({
+      reviewedAt: reviewLogs.reviewedAt,
+      rating: reviewLogs.rating,
+      deckId: reviewLogs.deckId,
+      cardId: reviewLogs.cardId,
+      phaseBefore: reviewLogs.phaseBefore,
+      intervalDaysBefore: reviewLogs.intervalDaysBefore,
+      easeBefore: reviewLogs.easeBefore,
+      reviewDurationMs: reviewLogs.reviewDurationMs,
+    })
+    .from(reviewLogs)
+    .where(and(...conditions))
+    .orderBy(asc(reviewLogs.reviewedAt));
+}
+
+export interface SchedulingStatsRow {
+  cardId: string;
+  deckId: string;
+  suspended: boolean;
+  phase: string;
+  intervalDays: number;
+  ease: number | null;
+  dueAt: number;
+}
+
+export async function getSchedulingStatsRows(
+  deckId?: string,
+): Promise<SchedulingStatsRow[]> {
+  const conditions = deckId ? [eq(cardScheduling.deckId, deckId)] : [];
+  const rows = await getDb()
+    .select({
+      cardId: cards.id,
+      deckId: cardScheduling.deckId,
+      suspended: cards.suspended,
+      phase: cardScheduling.phase,
+      intervalDays: cardScheduling.intervalDays,
+      ease: cardScheduling.ease,
+      dueAt: cardScheduling.dueAt,
+    })
+    .from(cards)
+    .innerJoin(cardScheduling, eq(cards.id, cardScheduling.cardId))
+    .where(conditions.length ? and(...conditions) : undefined);
+
+  return rows.map((r) => ({
+    cardId: r.cardId,
+    deckId: r.deckId,
+    suspended: r.suspended === 1,
+    phase: r.phase,
+    intervalDays: r.intervalDays,
+    ease: r.ease,
+    dueAt: r.dueAt,
+  }));
+}
+
+export async function getCardsCreatedSince(
+  deckId: string | null,
+  since: Date,
+): Promise<{ createdAt: number }[]> {
+  const conditions = [gte(cards.createdAt, since.getTime())];
+  if (deckId) conditions.push(eq(cards.deckId, deckId));
+
+  return getDb()
+    .select({ createdAt: cards.createdAt })
+    .from(cards)
+    .where(and(...conditions))
+    .orderBy(asc(cards.createdAt));
 }
 
 export async function getLearnedCardCount(deckId?: string): Promise<number> {

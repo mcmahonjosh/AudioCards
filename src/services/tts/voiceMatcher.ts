@@ -1,21 +1,184 @@
 import * as Speech from 'expo-speech';
-import { languagePrefix, normalizeLocale } from './locales';
+import { canonicalLocale, CURATED_LOCALES, getLocaleLabel, languagePrefix, normalizeLocale } from './locales';
 
 export interface VoiceInfo {
   identifier: string;
   language: string;
   name: string;
-  quality?: string;
+  quality?: string | number;
 }
 
-function localeMatches(voiceLang: string, target: string): boolean {
-  const v = normalizeLocale(voiceLang).toLowerCase();
-  const t = normalizeLocale(target).toLowerCase();
-  return v === t;
+/** iOS often ships Enhanced voices under a different region (e.g. es-ES) than es-MX. */
+const SPANISH_REGIONS = new Set(['es-mx', 'es-es', 'es-419', 'es-us', 'es-001', 'es']);
+
+function parseRegionFromIdentifier(identifier: string): string | null {
+  const match = identifier.match(
+    /(?:voice\.(?:compact|enhanced|premium)\.)?([a-z]{2}(?:-[a-z0-9]+)?)\./i,
+  );
+  return match ? normalizeLocale(match[1]).toLowerCase() : null;
 }
 
-function languageMatches(voiceLang: string, target: string): boolean {
-  return languagePrefix(voiceLang) === languagePrefix(target);
+export function resolveVoiceLocale(voice: VoiceInfo): string {
+  const fromId = parseRegionFromIdentifier(voice.identifier);
+  const fromLanguage = normalizeLocale(voice.language).toLowerCase();
+
+  // Prefer a specific region from the voice bundle when language is generic (e.g. "es").
+  if (fromId && fromId.includes('-')) {
+    const idLang = languagePrefix(fromId);
+    if (!fromLanguage.includes('-') || languagePrefix(fromLanguage) === idLang) {
+      return fromId;
+    }
+  }
+
+  if (fromLanguage && fromLanguage.length >= 2) return fromLanguage;
+  return fromId ?? fromLanguage;
+}
+
+function sameLanguageFamily(voiceLocale: string, targetLocale: string): boolean {
+  const voiceLang = languagePrefix(voiceLocale);
+  const targetLang = languagePrefix(targetLocale);
+  if (voiceLang !== targetLang) return false;
+
+  if (voiceLang === 'es') {
+    return SPANISH_REGIONS.has(voiceLocale) || SPANISH_REGIONS.has(targetLocale) || true;
+  }
+
+  return true;
+}
+
+function regionMatchScore(voiceLocale: string, targetLocale: string): number {
+  if (voiceLocale === targetLocale) return 40;
+
+  const voiceLang = languagePrefix(voiceLocale);
+  const targetLang = languagePrefix(targetLocale);
+  if (voiceLang !== targetLang) return 0;
+
+  // Same language, different region (e.g. es-ES voice for es-MX deck)
+  if (voiceLang === 'es') return 15;
+  if (voiceLang === 'en') return 12;
+  if (voiceLang === 'fr') return 12;
+  if (voiceLang === 'pt') return 12;
+  return 10;
+}
+
+function voiceQualityScore(quality?: string | number): number {
+  if (quality === 2 || quality === '2') return 45;
+  if (!quality) return 0;
+  const q = String(quality).toLowerCase();
+  if (q === 'premium') return 50;
+  if (q === 'enhanced') return 45;
+  if (q === 'default') return 5;
+  return 0;
+}
+
+function voiceNameScore(name: string, identifier: string): number {
+  const n = name.toLowerCase();
+  const id = identifier.toLowerCase();
+  if (n.includes('enhanced') || n.includes('premium') || id.includes('.enhanced.')) return 15;
+  if (n.includes('compact') || id.includes('.compact.')) return -20;
+  return 0;
+}
+
+/** Siri / expressive assistant voices (Rocko, Shelley, …) — not the Spoken Content voices users download. */
+export function isAssistantVoice(voice: VoiceInfo): boolean {
+  const id = voice.identifier.toLowerCase();
+  if (id.includes('eloquence') || id.includes('siri')) return true;
+
+  const name = voice.name.toLowerCase();
+  const assistantNames = new Set([
+    'rocko',
+    'shelley',
+    'aaron',
+    'nicky',
+    'eddie',
+    'flo',
+    'grandma',
+    'grandpa',
+    'reed',
+  ]);
+  return assistantNames.has(name);
+}
+
+function hasEnhancedQualityFlag(voice: VoiceInfo): boolean {
+  const raw = voice.quality;
+  if (raw === 2 || raw === '2') return true;
+  const q = String(raw ?? '').toLowerCase();
+  return q === 'enhanced' || q === 'premium';
+}
+
+/** Which picker section a locale belongs in (separate from bundle detection quirks). */
+export function getLocalePickerTier(
+  voices: VoiceInfo[],
+  locale: string,
+  best: VoiceInfo,
+): 'enhanced' | 'standard' {
+  const id = best.identifier.toLowerCase();
+  if (id.includes('.enhanced.') || id.includes('.premium.')) return 'enhanced';
+  if (hasEnhancedQualityFlag(best)) return 'enhanced';
+
+  const target = normalizeLocale(locale).toLowerCase();
+  const exactVoices = voices.filter((v) => resolveVoiceLocale(v) === target);
+  const hasAssistantOnLocale = exactVoices.some(isAssistantVoice);
+
+  // Downloaded non-compact voice (Paulina enhanced bundle, Karen, …)
+  if (!isCompactVoice(best) && !isAssistantVoice(best)) return 'enhanced';
+
+  // User's voice beat Siri/eloquence on this locale (e.g. Paulina over Rocko)
+  if (!isAssistantVoice(best) && hasAssistantOnLocale) return 'enhanced';
+
+  // Spanish Spoken Content voices are never Siri — treat as Enhanced tier
+  if (languagePrefix(locale) === 'es' && !isAssistantVoice(best)) return 'enhanced';
+
+  // Another downloaded enhanced voice exists for this language (e.g. Karen en-AU for en-US)
+  if (!isAssistantVoice(best) && hasNonAssistantEnhancedVoice(voices, locale)) {
+    return 'enhanced';
+  }
+
+  if (isCompactVoice(best)) return 'standard';
+
+  return 'enhanced';
+}
+
+function hasNonAssistantEnhancedVoice(voices: VoiceInfo[], locale: string): boolean {
+  const targetLang = languagePrefix(locale);
+  return voices.some(
+    (v) =>
+      languagePrefix(resolveVoiceLocale(v)) === targetLang &&
+      isEnhancedVoice(v) &&
+      !isAssistantVoice(v),
+  );
+}
+
+function scoreVoiceForSelection(
+  voice: VoiceInfo,
+  locale: string,
+  voices: VoiceInfo[],
+): number {
+  let score = scoreVoice(voice, locale);
+  const id = voice.identifier.toLowerCase();
+  if (id.includes('com.apple.voice.enhanced.')) score += 10;
+
+  if (languagePrefix(locale) === 'es') {
+    // Always skip Siri/eloquence for Spanish — use downloaded voices (Paulina, Monica, …).
+    if (isAssistantVoice(voice)) score -= 1000;
+  } else if (isAssistantVoice(voice) && hasNonAssistantEnhancedVoice(voices, locale)) {
+    score -= 1000;
+  }
+
+  return score;
+}
+
+export function scoreVoice(voice: VoiceInfo, locale: string): number {
+  const target = normalizeLocale(locale).toLowerCase();
+  const voiceLocale = resolveVoiceLocale(voice);
+
+  if (!sameLanguageFamily(voiceLocale, target)) return 0;
+
+  return (
+    voiceQualityScore(voice.quality) +
+    voiceNameScore(voice.name, voice.identifier) +
+    regionMatchScore(voiceLocale, target)
+  );
 }
 
 export function resolveBestVoice(
@@ -24,19 +187,27 @@ export function resolveBestVoice(
 ): VoiceInfo | null {
   if (voices.length === 0) return null;
 
-  const exact = voices.find((v) => localeMatches(v.language, locale));
-  if (exact) return exact;
+  const ranked = voices
+    .map((voice) => ({ voice, score: scoreVoiceForSelection(voice, locale, voices) }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score);
 
-  const prefix = languagePrefix(locale);
-  const sameLanguage = voices.filter((v) => languageMatches(v.language, locale));
-  if (sameLanguage.length > 0) {
-    const regionMatch = sameLanguage.find((v) =>
-      normalizeLocale(v.language).toLowerCase().startsWith(prefix),
-    );
-    return regionMatch ?? sameLanguage[0];
-  }
+  if (ranked.length > 0) return ranked[0].voice;
 
   return voices[0];
+}
+
+export function getVoicesForExactLocale(
+  voices: VoiceInfo[],
+  locale: string,
+): VoiceInfo[] {
+  const target = normalizeLocale(locale).toLowerCase();
+  return voices
+    .filter((v) => resolveVoiceLocale(v) === target)
+    .sort(
+      (a, b) =>
+        scoreVoiceForSelection(b, target, voices) - scoreVoiceForSelection(a, target, voices),
+    );
 }
 
 export async function loadAvailableVoices(
@@ -57,7 +228,7 @@ export async function loadAvailableVoices(
     identifier: v.identifier,
     language: v.language,
     name: v.name,
-    quality: v.quality,
+    quality: v.quality as string | number | undefined,
   }));
 }
 
@@ -65,7 +236,108 @@ export function getVoicesForLocale(
   voices: VoiceInfo[],
   locale: string,
 ): VoiceInfo[] {
-  const sameLanguage = voices.filter((v) => languageMatches(v.language, locale));
-  if (sameLanguage.length > 0) return sameLanguage;
-  return voices.filter((v) => localeMatches(v.language, locale));
+  return voices
+    .filter((v) => scoreVoice(v, locale) > 0)
+    .sort((a, b) => scoreVoice(b, locale) - scoreVoice(a, locale));
+}
+
+export function describeVoice(voice: VoiceInfo | null): string {
+  if (!voice) return 'None';
+  const locale = resolveVoiceLocale(voice);
+  const quality = voice.quality && voice.quality !== 'Default'
+    ? ` · ${voice.quality}`
+    : '';
+  return `${voice.name} (${locale})${quality}`;
+}
+
+export function isCompactVoice(voice: VoiceInfo): boolean {
+  const id = voice.identifier.toLowerCase();
+  return (
+    id.includes('.compact.') ||
+    id.includes('.super-compact.') ||
+    id.includes('_compact') ||
+    id.includes('com.apple.voice.compact')
+  );
+}
+
+export function isEnhancedVoice(voice: VoiceInfo): boolean {
+  const id = voice.identifier.toLowerCase();
+  if (id.includes('.enhanced.') || id.includes('.premium.')) return true;
+  if (id.includes('_enhanced') || id.includes('_premium')) return true;
+
+  if (isCompactVoice(voice)) {
+    return hasEnhancedQualityFlag(voice);
+  }
+
+  if (hasEnhancedQualityFlag(voice)) return true;
+
+  // Siri / expressive voices are high quality (not compact)
+  if (id.includes('eloquence')) return true;
+  // Downloaded Apple voice bundles (non-compact) — iOS often reports quality "Default" anyway
+  if (id.includes('com.apple.voice.')) return true;
+  if (id.includes('com.apple.ttsbundle.') && !id.includes('compact')) return true;
+
+  return false;
+}
+
+export interface LocaleVoiceOption {
+  locale: string;
+  voice: VoiceInfo;
+}
+
+export function buildLocaleVoiceOptions(voices: VoiceInfo[]): {
+  enhanced: LocaleVoiceOption[];
+  standard: LocaleVoiceOption[];
+} {
+  const enhanced: LocaleVoiceOption[] = [];
+  const standard: LocaleVoiceOption[] = [];
+  const seen = new Set<string>();
+
+  const addLocale = (locale: string) => {
+    const key = normalizeLocale(locale).toLowerCase();
+    if (seen.has(key)) return;
+
+    const best = resolveBestVoice(voices, locale);
+    if (!best || scoreVoice(best, locale) <= 0) return;
+
+    seen.add(key);
+
+    const entry: LocaleVoiceOption = {
+      locale: canonicalLocale(locale),
+      voice: best,
+    };
+
+    if (getLocalePickerTier(voices, locale, best) === 'enhanced') enhanced.push(entry);
+    else standard.push(entry);
+  };
+
+  // Known locales first so labels stay familiar (e.g. Spanish Mexico).
+  for (const { code } of CURATED_LOCALES) {
+    addLocale(code);
+  }
+
+  // Any other locales from downloaded voices on this device.
+  for (const voice of voices) {
+    addLocale(resolveVoiceLocale(voice));
+  }
+
+  const sortByLabel = (a: LocaleVoiceOption, b: LocaleVoiceOption) =>
+    getLocaleLabel(a.locale).localeCompare(getLocaleLabel(b.locale));
+
+  enhanced.sort(sortByLabel);
+  standard.sort(sortByLabel);
+
+  return { enhanced, standard };
+}
+
+export function localesMatch(a: string, b: string): boolean {
+  return normalizeLocale(a).toLowerCase() === normalizeLocale(b).toLowerCase();
+}
+
+export function findVoiceById(
+  voices: VoiceInfo[],
+  voiceId: string | null | undefined,
+): VoiceInfo | null {
+  if (!voiceId) return null;
+  return voices.find((v) => v.identifier === voiceId) ?? null;
 }

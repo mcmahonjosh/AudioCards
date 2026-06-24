@@ -6,26 +6,46 @@ import {
   ScrollView,
   Switch,
   Alert,
+  Linking,
+  TouchableOpacity,
 } from 'react-native';
+import Constants from 'expo-constants';
 import { Colors, Spacing, FontSize } from '@/constants/Colors';
 import { useAppContext } from '@/src/context/AppContext';
-import { LocaleButton, LocalePicker } from '@/src/components/LocalePicker';
+import { LocaleButton } from '@/src/components/LocalePicker';
+import { VoicePicker } from '@/src/components/VoicePicker';
 import { Button } from '@/src/components/Button';
+import { NumberStepper } from '@/src/components/NumberStepper';
+import { clampNewCardsPerDay } from '@/src/scheduler/newCardLimits';
+import { VolumeSlider } from '@/src/components/VolumeSlider';
 import { ttsService } from '@/src/services/tts/TtsService';
+import { describeVoice } from '@/src/services/tts/voiceMatcher';
 import { voiceCommandService } from '@/src/services/voice/VoiceCommandService';
+import { getAppUrls } from '@/src/constants/urls';
+import { SafetyNoticeModal } from '@/src/components/SafetyNoticeModal';
 
 export default function SettingsScreen() {
   const { settings, updateSettings } = useAppContext();
-  const [localePicker, setLocalePicker] = useState<'front' | 'back' | null>(null);
+  const [voicePicker, setVoicePicker] = useState<'front' | 'back' | null>(null);
   const [permissions, setPermissions] = useState({ microphone: false, speechRecognition: false });
   const [voiceCount, setVoiceCount] = useState(0);
+  const [frontVoiceLabel, setFrontVoiceLabel] = useState('');
+  const [backVoiceLabel, setBackVoiceLabel] = useState('');
+  const [localVolume, setLocalVolume] = useState(settings.speechVolume);
+  const [safetyModal, setSafetyModal] = useState(false);
+
+  useEffect(() => {
+    setLocalVolume(settings.speechVolume);
+  }, [settings.speechVolume]);
 
   useEffect(() => {
     ttsService.initialize().then(() => {
       setVoiceCount(ttsService.getVoices().length);
+      setFrontVoiceLabel(describeVoice(ttsService.resolveVoice(settings.defaultFrontLocale)));
+      setBackVoiceLabel(describeVoice(ttsService.resolveVoice(settings.defaultBackLocale)));
     });
     voiceCommandService.getPermissionStatus().then(setPermissions);
-  }, []);
+  }, [settings.defaultFrontLocale, settings.defaultBackLocale]);
 
   const requestPermissions = async () => {
     const granted = await voiceCommandService.requestPermissions();
@@ -34,18 +54,37 @@ export default function SettingsScreen() {
     if (!granted) {
       Alert.alert('Permissions Required', 'Microphone and speech recognition are needed for hands-free mode.');
     }
+    return granted;
+  };
+
+  const handleHandsFreeToggle = async (enabled: boolean) => {
+    if (enabled) {
+      const granted = await requestPermissions();
+      if (!granted) return;
+    }
+    await updateSettings({ handsFreeMode: enabled });
   };
 
   const previewVoice = async () => {
     await ttsService.speak(
       'Hello! This is a preview of the text to speech voice.',
       settings.defaultFrontLocale,
-      { rate: settings.speechRate },
+      { rate: settings.speechRate, volume: localVolume },
     );
   };
 
   return (
     <ScrollView style={styles.container}>
+      <Text style={styles.section}>Study Limits</Text>
+      <Text style={styles.label}>Default new cards per day</Text>
+      <Text style={styles.hint}>
+        Applies to all decks unless a deck uses its own limit in Scheduler settings.
+      </Text>
+      <NumberStepper
+        value={settings.defaultNewCardsPerDay}
+        onChange={(v) => updateSettings({ defaultNewCardsPerDay: clampNewCardsPerDay(v) })}
+      />
+
       <Text style={styles.section}>Voice & Audio</Text>
 
       <View style={styles.row}>
@@ -63,6 +102,15 @@ export default function SettingsScreen() {
         </View>
       </View>
 
+      <VolumeSlider
+        value={localVolume}
+        onChange={setLocalVolume}
+        onChangeComplete={(v) => updateSettings({ speechVolume: v })}
+      />
+      <Text style={styles.hint}>
+        Max volume uses the main speaker and a louder voice profile. Also turn up your iPhone volume.
+      </Text>
+
       <SettingToggle
         label="Auto-play front audio"
         value={settings.autoPlayFront}
@@ -77,22 +125,31 @@ export default function SettingsScreen() {
         label="Hands-free mode"
         subtitle="Listen for voice commands during review"
         value={settings.handsFreeMode}
-        onChange={(v) => updateSettings({ handsFreeMode: v })}
+        onChange={handleHandsFreeToggle}
       />
 
       <Button title="Preview Voice" onPress={previewVoice} variant="secondary" style={styles.previewBtn} />
       <Text style={styles.hint}>{voiceCount} TTS voices available on device</Text>
+      <Text style={styles.hint}>
+        Front voice: {frontVoiceLabel || 'Loading…'}
+      </Text>
+      <Text style={styles.hint}>
+        Back voice: {backVoiceLabel || 'Loading…'}
+      </Text>
+      <Text style={styles.hint}>
+        For better quality on iPhone: Settings → Accessibility → Spoken Content → Voices → download Enhanced voices for your languages.
+      </Text>
 
       <Text style={styles.section}>Default Languages</Text>
       <LocaleButton
         locale={settings.defaultFrontLocale}
-        label="Default Front Language"
-        onPress={() => setLocalePicker('front')}
+        label="Front Language"
+        onPress={() => setVoicePicker('front')}
       />
       <LocaleButton
         locale={settings.defaultBackLocale}
-        label="Default Back Language"
-        onPress={() => setLocalePicker('back')}
+        label="Back Language"
+        onPress={() => setVoicePicker('back')}
       />
 
       <Text style={styles.section}>Permissions</Text>
@@ -110,21 +167,65 @@ export default function SettingsScreen() {
       </View>
       <Button title="Request Permissions" onPress={requestPermissions} variant="secondary" />
 
-      <LocalePicker
-        visible={localePicker === 'front'}
-        selected={settings.defaultFrontLocale}
-        onSelect={(locale) => updateSettings({ defaultFrontLocale: locale })}
-        onClose={() => setLocalePicker(null)}
-        title="Default Front Language"
+      <Text style={styles.section}>About</Text>
+      <Text style={styles.hint}>Version {Constants.expoConfig?.version ?? '1.0.0'}</Text>
+      <Text style={styles.hint}>
+        Your flashcards and review history are stored only on this device.
+      </Text>
+      <AboutLink label="Study safely" onPress={() => setSafetyModal(true)} />
+      <AboutLink label="Privacy Policy" url={getAppUrls().privacyPolicyUrl} />
+      <AboutLink label="Support" url={getAppUrls().supportUrl} />
+
+      <SafetyNoticeModal
+        visible={safetyModal}
+        dismissOnly
+        onAcknowledge={() => setSafetyModal(false)}
+        onDismiss={() => setSafetyModal(false)}
       />
-      <LocalePicker
-        visible={localePicker === 'back'}
-        selected={settings.defaultBackLocale}
+
+      <VoicePicker
+        visible={voicePicker === 'front'}
+        selectedLocale={settings.defaultFrontLocale}
+        onSelect={(locale) => updateSettings({ defaultFrontLocale: locale })}
+        onClose={() => setVoicePicker(null)}
+        title="Front Language"
+      />
+      <VoicePicker
+        visible={voicePicker === 'back'}
+        selectedLocale={settings.defaultBackLocale}
         onSelect={(locale) => updateSettings({ defaultBackLocale: locale })}
-        onClose={() => setLocalePicker(null)}
-        title="Default Back Language"
+        onClose={() => setVoicePicker(null)}
+        title="Back Language"
       />
     </ScrollView>
+  );
+}
+
+function AboutLink({
+  label,
+  url,
+  onPress,
+}: {
+  label: string;
+  url?: string;
+  onPress?: () => void;
+}) {
+  const handlePress = () => {
+    if (onPress) {
+      onPress();
+      return;
+    }
+    if (url) {
+      Linking.openURL(url).catch(() => {
+        Alert.alert('Could not open link', url);
+      });
+    }
+  };
+
+  return (
+    <TouchableOpacity style={styles.aboutLink} onPress={handlePress}>
+      <Text style={styles.aboutLinkText}>{label}</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -183,4 +284,10 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm,
   },
   permStatus: { fontSize: FontSize.sm, fontWeight: '600' },
+  aboutLink: {
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  aboutLinkText: { color: Colors.primary, fontSize: FontSize.md },
 });

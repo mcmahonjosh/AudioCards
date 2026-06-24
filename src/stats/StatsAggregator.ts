@@ -1,31 +1,54 @@
 import {
   getReviewLogsSince,
+  getReviewLogsDetailedSince,
+  getSchedulingStatsRows,
   countDueCards,
   getReviewsToday,
   getLearnedCardCount,
   getTotalReviews,
-  getWeakCards,
-  getSchedulingByDeck,
 } from '@/src/db/repositories';
 import { localDateString, startOfDay } from '@/src/db/mappers';
+import {
+  computeTodayStats,
+  computeFutureDueChart,
+  computeCalendarHeatmap,
+  computeReviewsChart,
+  computeCardCounts,
+  computeIntervalHistogram,
+  computeEaseHistogram,
+  computeHourlyBreakdown,
+  computeAnswerButtonGroups,
+  computeAddedChart,
+  countNewCardsStudied,
+  rangeToSince,
+  type StatsRange,
+  type IntervalRange,
+  type TodayStats,
+  type FutureDueChartData,
+  type CalendarHeatmapData,
+  type ReviewsChartData,
+  type CardCountsData,
+  type IntervalHistogramData,
+  type EaseHistogramData,
+  type HourlyPoint,
+  type AnswerButtonGroupData,
+  type AddedChartData,
+} from './statsCompute';
 
-export interface DailyReviewPoint {
-  date: string;
-  count: number;
-}
-
-export interface DailyRatingPoint {
-  date: string;
-  again: number;
-  hard: number;
-  good: number;
-  easy: number;
-}
-
-export interface DueForecastPoint {
-  date: string;
-  count: number;
-}
+export type {
+  StatsRange,
+  IntervalRange,
+  TodayStats,
+  FutureDueChartData,
+  CalendarHeatmapData,
+  ReviewsChartData,
+  CardCountsData,
+  IntervalHistogramData,
+  EaseHistogramData,
+  HourlyPoint,
+  AnswerButtonGroupData,
+  AddedChartData,
+};
 
 export interface StatsSummary {
   dueToday: number;
@@ -35,16 +58,6 @@ export interface StatsSummary {
   retentionRate: number;
   streak: number;
   ratingBreakdown: { again: number; hard: number; good: number; easy: number };
-}
-
-function dateRange(days: number): string[] {
-  const dates: string[] = [];
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    dates.push(localDateString(d));
-  }
-  return dates;
 }
 
 function computeStreak(logs: { reviewedAt: number }[]): number {
@@ -98,109 +111,87 @@ export async function getStatsSummary(deckId?: string): Promise<StatsSummary> {
   };
 }
 
-export async function getDailyReviews(
-  deckId: string | null,
-  days = 30,
-): Promise<DailyReviewPoint[]> {
-  const since = new Date();
-  since.setDate(since.getDate() - days);
-  const logs = await getReviewLogsSince(deckId, since);
-
-  const counts: Record<string, number> = {};
-  for (const d of dateRange(days)) counts[d] = 0;
-
-  for (const log of logs) {
-    const key = localDateString(new Date(log.reviewedAt));
-    if (key in counts) counts[key]++;
-  }
-
-  return dateRange(days).map((date) => ({ date, count: counts[date] }));
+export async function getTodayStats(deckId?: string): Promise<TodayStats> {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const logs = await getReviewLogsDetailedSince(deckId ?? null, start);
+  return computeTodayStats(logs);
 }
 
-export async function getDailyRatings(
-  deckId: string | null,
-  days = 14,
-): Promise<DailyRatingPoint[]> {
-  const since = new Date();
-  since.setDate(since.getDate() - days);
-  const logs = await getReviewLogsSince(deckId, since);
-
-  const byDate: Record<string, DailyRatingPoint> = {};
-  for (const d of dateRange(days)) {
-    byDate[d] = { date: d, again: 0, hard: 0, good: 0, easy: 0 };
-  }
-
-  for (const log of logs) {
-    const key = localDateString(new Date(log.reviewedAt));
-    if (byDate[key]) {
-      const r = log.rating as 'again' | 'hard' | 'good' | 'easy';
-      byDate[key][r]++;
-    }
-  }
-
-  return dateRange(days).map((d) => byDate[d]);
+export async function getFutureDueChart(
+  deckId: string | undefined,
+  options: { range: StatsRange; includeBacklog: boolean },
+): Promise<FutureDueChartData> {
+  const rows = await getSchedulingStatsRows(deckId);
+  return computeFutureDueChart(rows, options, undefined, deckId);
 }
 
-export async function getDueForecast(
-  deckId: string,
-  days = 7,
-): Promise<DueForecastPoint[]> {
-  const scheduling = await getSchedulingByDeck(deckId);
-  const now = startOfDay();
-  const result: DueForecastPoint[] = [];
-
-  for (let i = 0; i < days; i++) {
-    const dayStart = new Date(now);
-    dayStart.setDate(dayStart.getDate() + i);
-    const dayEnd = new Date(dayStart);
-    dayEnd.setHours(23, 59, 59, 999);
-
-    const count = scheduling.filter((s) => {
-      const due = s.dueAt.getTime();
-      if (i === 0) return due <= dayEnd.getTime() && s.phase !== 'new';
-      return due >= dayStart.getTime() && due <= dayEnd.getTime() && s.phase !== 'new';
-    }).length;
-
-    result.push({
-      date: localDateString(dayStart),
-      count,
-    });
-  }
-
-  return result;
+export async function getCalendarHeatmap(
+  deckId: string | undefined,
+  year: number,
+): Promise<CalendarHeatmapData> {
+  const since = startOfDay(new Date(year, 0, 1));
+  const logs = await getReviewLogsDetailedSince(deckId ?? null, since);
+  return computeCalendarHeatmap(logs, year);
 }
 
-export async function getDeckProgress(
-  deckId: string,
-  days = 30,
-): Promise<{ date: string; mature: number }[]> {
-  const logs = await getReviewLogsSince(deckId, new Date(Date.now() - days * 86400000));
-  const scheduling = await getSchedulingByDeck(deckId);
-
-  const currentMature = scheduling.filter(
-    (s) => s.phase === 'review' && s.reviewCount > 0,
-  ).length;
-
-  const dates = dateRange(days);
-  const progressMap: Record<string, number> = {};
-  for (const d of dates) progressMap[d] = currentMature;
-
-  // Approximate historical progress from review logs
-  let mature = 0;
-  for (const d of dates) {
-    const dayEnd = new Date(d);
-    dayEnd.setHours(23, 59, 59, 999);
-    mature = scheduling.filter(
-      (s) =>
-        s.phase === 'review' &&
-        s.reviewCount > 0 &&
-        s.lastReviewedAt &&
-        s.lastReviewedAt.getTime() <= dayEnd.getTime(),
-    ).length;
-    progressMap[d] = mature;
-  }
-
-  return dates.map((date) => ({ date, mature: progressMap[date] }));
+export async function getReviewsChart(
+  deckId: string | undefined,
+  options: { range: StatsRange; mode: 'count' | 'time' },
+): Promise<ReviewsChartData> {
+  const since = rangeToSince(options.range);
+  const logs = await getReviewLogsDetailedSince(deckId ?? null, since);
+  return computeReviewsChart(logs, options);
 }
 
-export { getWeakCards };
+export async function getCardCountsBreakdown(
+  deckId: string | undefined,
+  options: { separateSuspended: boolean },
+): Promise<CardCountsData> {
+  const rows = await getSchedulingStatsRows(deckId);
+  const logs = await getReviewLogsDetailedSince(deckId ?? null, new Date(0));
+  const newCardsStudied = countNewCardsStudied(logs);
+  return computeCardCounts(rows, options, newCardsStudied);
+}
+
+export async function getIntervalHistogram(
+  deckId: string | undefined,
+  range: IntervalRange,
+): Promise<IntervalHistogramData> {
+  const rows = await getSchedulingStatsRows(deckId);
+  return computeIntervalHistogram(rows, range);
+}
+
+export async function getEaseHistogram(deckId?: string): Promise<EaseHistogramData> {
+  const rows = await getSchedulingStatsRows(deckId);
+  return computeEaseHistogram(rows);
+}
+
+export async function getHourlyBreakdown(
+  deckId: string | undefined,
+  range: StatsRange,
+): Promise<HourlyPoint[]> {
+  const since = rangeToSince(range);
+  const logs = await getReviewLogsDetailedSince(deckId ?? null, since);
+  return computeHourlyBreakdown(logs, range);
+}
+
+export async function getAnswerButtonGroups(
+  deckId: string | undefined,
+  range: StatsRange,
+): Promise<AnswerButtonGroupData[]> {
+  const since = rangeToSince(range);
+  const logs = await getReviewLogsDetailedSince(deckId ?? null, since);
+  return computeAnswerButtonGroups(logs, range);
+}
+
+export async function getAddedChart(
+  deckId: string | undefined,
+  range: StatsRange,
+): Promise<AddedChartData> {
+  const since = rangeToSince(range);
+  const logs = await getReviewLogsDetailedSince(deckId ?? null, since);
+  return computeAddedChart(logs, range, undefined, deckId);
+}
+
+export { formatDurationMs } from './statsCompute';

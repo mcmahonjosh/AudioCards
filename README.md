@@ -10,13 +10,14 @@ A local-first, voice-first flashcard app for language learning built with React 
 - **100% offline**: SQLite storage, no backend required
 - **Stats & charts**: Daily reviews, rating breakdown, due forecast, deck progress
 - **CSV import**: Import cards from CSV files locally
-- **Anki import**: Architecture placeholder for future `.apkg` support
+- **Anki import**: Import `.apkg` decks with HTML, media, and scheduling (cloze note types not supported)
 
 ## Requirements
 
 - Node.js 18+
-- EAS CLI for development builds (`npm install -g eas-cli`)
-- Physical device recommended for voice command testing
+- EAS CLI for device builds (`npm install -g eas-cli`)
+- Physical iPhone recommended for voice command testing
+- Apple Developer Program membership for App Store distribution
 
 ## Setup
 
@@ -33,14 +34,41 @@ This app requires a **development build** (not Expo Go) because speech recogniti
 npm start
 
 # Create development build (cloud)
-eas build --profile development --platform android
+eas build --profile development --platform ios
 
 # Or build locally
-npx expo run:android
 npx expo run:ios
 ```
 
 Install the development build on your device, then connect to Metro.
+
+## Quality checks
+
+```bash
+npm run lint
+npm run typecheck
+npm test
+```
+
+## Production release (iOS)
+
+```bash
+# Build for App Store
+npm run build:ios
+
+# Submit to App Store Connect (after TestFlight QA)
+npm run submit:ios
+```
+
+Configure `ascAppId` in `eas.json` under `submit.production` after creating the app in App Store Connect.
+
+## Privacy
+
+Privacy policy: [https://mcmahonjosh.github.io/AudioCards/privacy](https://mcmahonjosh.github.io/AudioCards/privacy)
+
+Support: [https://github.com/mcmahonjosh/AudioCards/issues](https://github.com/mcmahonjosh/AudioCards/issues)
+
+The in-app Settings screen uses the same URLs (configured in `app.config.ts`).
 
 ## Voice Commands
 
@@ -51,7 +79,7 @@ During review, say:
 - **pause / resume** — pause or resume the session
 - **end** — end the review session
 
-Touch controls are always available as fallback.
+Touch controls are always available as fallback. Microphone permission is requested when you enable hands-free mode, not at app launch.
 
 ## CSV Import Format
 
@@ -72,6 +100,7 @@ src/services/  TTS, voice commands, import
 src/review/    Review session controller
 src/stats/     Stats aggregation
 src/components/ Reusable UI
+docs/          Privacy policy (GitHub Pages)
 ```
 
 ## Tech Stack
