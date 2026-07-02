@@ -29,4 +29,5 @@ export const DEFAULT_SETTINGS = {
   defaultBackLocale: 'es-MX',
   defaultNewCardsPerDay: 20,
   safetyNoticeAcknowledged: false,
+  voiceIntroAcknowledged: false,
 };

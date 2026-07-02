@@ -8,6 +8,7 @@ import {
   formatCountAxisLabel,
   futureDueAxisLabels,
   niceMaxValue,
+  chartSeriesKey,
 } from './chartAxis';
 import { StatsChartFrame } from './StatsChartFrame';
 
@@ -20,7 +21,6 @@ export function FutureDueChart({ data, width }: FutureDueChartProps) {
   if (data.points.length === 0) return null;
 
   const maxDue = niceMaxValue(Math.max(...data.points.map((p) => p.due), 0));
-  const maxCumulative = niceMaxValue(Math.max(...data.points.map((p) => p.cumulative), 0));
   const labels = futureDueAxisLabels(data.points);
 
   const barData = data.points.map((p, i) => ({
@@ -29,45 +29,20 @@ export function FutureDueChart({ data, width }: FutureDueChartProps) {
     frontColor: StatsColors.dueBar,
   }));
 
-  const lineData = data.points.map((p) => ({
-    value: p.cumulative,
-  }));
-
   const chartWidth = width - CHART_AXIS.yAxisLabelWidth - 24;
 
   return (
     <StatsChartFrame
       yAxisLabel="Due / day"
-      secondaryYAxisLabel="Cumulative"
       xAxisLabel="Days from today"
-      legend={[
-        { color: StatsColors.dueBar, label: 'Due' },
-        { color: StatsColors.cumulative, label: 'Cumulative' },
-      ]}
+      legend={[{ color: StatsColors.dueBar, label: 'Due' }]}
     >
       <View style={styles.container}>
         <BarChart
+          key={chartSeriesKey(data.points.map((p) => p.due))}
           width={chartWidth}
           height={180}
           data={barData}
-          lineData={lineData}
-          showLine
-        lineConfig={{
-          color: StatsColors.cumulative,
-          thickness: 2,
-          curved: false,
-          hideDataPoints: false,
-          dataPointsColor: StatsColors.cumulative,
-          dataPointsRadius: 2,
-          isSecondary: true,
-        }}
-          secondaryYAxis={{
-            noOfSections: 4,
-            maxValue: maxCumulative,
-            roundToDigits: 0,
-            yAxisColor: StatsColors.cumulative,
-            yAxisTextStyle: { color: StatsColors.cumulative, fontSize: 9 },
-          }}
           barWidth={Math.max(4, Math.min(12, chartWidth / data.points.length - 2))}
           spacing={2}
           roundedTop

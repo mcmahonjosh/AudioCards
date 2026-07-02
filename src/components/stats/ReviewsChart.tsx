@@ -10,6 +10,7 @@ import {
   niceMaxValue,
   PAST_DAY_BAR_SPACING,
   PAST_DAY_BAR_WIDTH,
+  chartSeriesKey,
 } from './chartAxis';
 import { StatsChartFrame } from './StatsChartFrame';
 import { useScrollToRecentDay } from './statsScrollChart';
@@ -27,7 +28,6 @@ export function ReviewsChart({ data, width, timeMode = false }: ReviewsChartProp
   if (data.points.length === 0) return null;
 
   const maxTotal = niceMaxValue(Math.max(...data.points.map((p) => p.total), 0));
-  const maxCumulative = niceMaxValue(Math.max(...data.points.map((p) => p.cumulative), 0));
   const labels = dayOffsetAxisLabels(data.points);
 
   const stackData = data.points.map((p, i) => ({
@@ -40,48 +40,28 @@ export function ReviewsChart({ data, width, timeMode = false }: ReviewsChartProp
     label: labels[i],
   }));
 
-  const lineData = data.points.map((p) => ({
-    value: p.cumulative,
-  }));
-
   const yUnit = timeMode ? 'sec / day' : 'Reviews / day';
+  const seriesKey = chartSeriesKey(
+    data.points.flatMap((p) => [p.total, p.learning, p.young, p.mature, p.relearn]),
+  );
 
   return (
     <StatsChartFrame
       yAxisLabel={yUnit}
-      secondaryYAxisLabel={timeMode ? 'Total sec' : 'Cumulative'}
       xAxisLabel="Days ago (0 = today · swipe right for older)"
       legend={[
         { color: StatsColors.learning, label: 'Learning' },
         { color: StatsColors.young, label: 'Young' },
         { color: StatsColors.mature, label: 'Mature' },
         { color: StatsColors.relearning, label: 'Relearn' },
-        { color: StatsColors.cumulative, label: 'Cumulative' },
       ]}
     >
       <View style={styles.container}>
         <BarChart
+          key={seriesKey}
           width={viewportWidth}
           height={180}
           stackData={stackData}
-          lineData={lineData}
-          showLine
-          lineConfig={{
-            color: StatsColors.cumulative,
-            thickness: 2,
-            curved: false,
-            hideDataPoints: false,
-            dataPointsColor: StatsColors.cumulative,
-            dataPointsRadius: 2,
-            isSecondary: true,
-          }}
-          secondaryYAxis={{
-            noOfSections: 4,
-            maxValue: maxCumulative,
-            roundToDigits: 0,
-            yAxisColor: StatsColors.cumulative,
-            yAxisTextStyle: { color: StatsColors.cumulative, fontSize: 9 },
-          }}
           barWidth={PAST_DAY_BAR_WIDTH}
           spacing={PAST_DAY_BAR_SPACING}
           hideRules={false}

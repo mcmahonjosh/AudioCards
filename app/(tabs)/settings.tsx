@@ -23,6 +23,8 @@ import { describeVoice } from '@/src/services/tts/voiceMatcher';
 import { voiceCommandService } from '@/src/services/voice/VoiceCommandService';
 import { getAppUrls } from '@/src/constants/urls';
 import { SafetyNoticeModal } from '@/src/components/SafetyNoticeModal';
+import { VoiceIntroModal } from '@/src/components/VoiceIntroModal';
+import { HowToUseModal } from '@/src/components/HowToUseModal';
 
 export default function SettingsScreen() {
   const { settings, updateSettings } = useAppContext();
@@ -33,6 +35,8 @@ export default function SettingsScreen() {
   const [backVoiceLabel, setBackVoiceLabel] = useState('');
   const [localVolume, setLocalVolume] = useState(settings.speechVolume);
   const [safetyModal, setSafetyModal] = useState(false);
+  const [voiceIntroModal, setVoiceIntroModal] = useState(false);
+  const [howToUseModal, setHowToUseModal] = useState(false);
 
   useEffect(() => {
     setLocalVolume(settings.speechVolume);
@@ -123,7 +127,8 @@ export default function SettingsScreen() {
       />
       <SettingToggle
         label="Hands-free mode"
-        subtitle="Listen for voice commands during review"
+        subtitle="On by default — listen for voice commands during review"
+        testID="settings-hands-free-toggle"
         value={settings.handsFreeMode}
         onChange={handleHandsFreeToggle}
       />
@@ -172,6 +177,8 @@ export default function SettingsScreen() {
       <Text style={styles.hint}>
         Your flashcards and review history are stored only on this device.
       </Text>
+      <AboutLink label="How to use" onPress={() => setHowToUseModal(true)} />
+      <AboutLink label="Voice commands" onPress={() => setVoiceIntroModal(true)} />
       <AboutLink label="Study safely" onPress={() => setSafetyModal(true)} />
       <AboutLink label="Privacy Policy" url={getAppUrls().privacyPolicyUrl} />
       <AboutLink label="Support" url={getAppUrls().supportUrl} />
@@ -182,6 +189,15 @@ export default function SettingsScreen() {
         onAcknowledge={() => setSafetyModal(false)}
         onDismiss={() => setSafetyModal(false)}
       />
+
+      <VoiceIntroModal
+        visible={voiceIntroModal}
+        dismissOnly
+        onAcknowledge={() => setVoiceIntroModal(false)}
+        onDismiss={() => setVoiceIntroModal(false)}
+      />
+
+      <HowToUseModal visible={howToUseModal} onClose={() => setHowToUseModal(false)} />
 
       <VoicePicker
         visible={voicePicker === 'front'}
@@ -234,11 +250,13 @@ function SettingToggle({
   subtitle,
   value,
   onChange,
+  testID,
 }: {
   label: string;
   subtitle?: string;
   value: boolean;
   onChange: (v: boolean) => void;
+  testID?: string;
 }) {
   return (
     <View style={styles.toggleRow}>
@@ -247,6 +265,7 @@ function SettingToggle({
         {subtitle ? <Text style={styles.hint}>{subtitle}</Text> : null}
       </View>
       <Switch
+        testID={testID}
         value={value}
         onValueChange={onChange}
         trackColor={{ false: Colors.border, true: Colors.primary }}

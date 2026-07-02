@@ -164,4 +164,5 @@ export interface AppSettings {
   defaultBackLocale: string;
   defaultNewCardsPerDay: number;
   safetyNoticeAcknowledged: boolean;
+  voiceIntroAcknowledged: boolean;
 }

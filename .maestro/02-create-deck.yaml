@@ -1,0 +1,11 @@
+appId: com.joshuamcmahon.audiocards
+---
+- launchApp
+- tapOn:
+    id: create-deck-button
+- tapOn:
+    id: deck-name-input
+- inputText: "E2E Test Deck"
+- tapOn:
+    id: create-deck-submit
+- assertVisible: "E2E Test Deck"

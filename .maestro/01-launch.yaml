@@ -1,0 +1,6 @@
+appId: com.joshuamcmahon.audiocards
+---
+- launchApp
+- assertVisible: "Home"
+- assertVisible: "Stats"
+- assertVisible: "Settings"

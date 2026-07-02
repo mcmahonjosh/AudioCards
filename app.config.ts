@@ -24,6 +24,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         'Audio Cards uses speech recognition for hands-free voice commands during review.',
       NSMicrophoneUsageDescription:
         'Audio Cards uses the microphone for hands-free voice commands during review.',
+      NSPhotoLibraryUsageDescription:
+        'Audio Cards lets you import flashcard decks and media from files on your device. Photo library access is only used when you choose an image or deck file to import.',
     },
   },
   android: {

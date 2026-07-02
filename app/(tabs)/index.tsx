@@ -15,6 +15,8 @@ import { getAllDecks, countDueCards, getReviewsToday } from '@/src/db/repositori
 import { getStatsSummary } from '@/src/stats/StatsAggregator';
 import { Deck } from '@/src/models/types';
 import { useAppContext } from '@/src/context/AppContext';
+import { useStatsContext } from '@/src/context/StatsContext';
+import { useDeckCache } from '@/src/context/DeckCacheContext';
 
 interface DeckWithDue extends Deck {
   dueCount: number;
@@ -22,6 +24,8 @@ interface DeckWithDue extends Deck {
 
 export default function HomeScreen() {
   const { dbReady } = useAppContext();
+  const { isStale, preloadStats } = useStatsContext();
+  const { preloadDeck } = useDeckCache();
   const [decks, setDecks] = useState<DeckWithDue[]>([]);
   const [dueToday, setDueToday] = useState(0);
   const [reviewsToday, setReviewsToday] = useState(0);
@@ -46,7 +50,8 @@ export default function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       load();
-    }, [load]),
+      if (isStale) preloadStats();
+    }, [load, isStale, preloadStats]),
   );
 
   const onRefresh = async () => {
@@ -69,7 +74,10 @@ export default function HomeScreen() {
         <Button
           title="Start Review"
           subtitle={`${dueToday} cards due`}
-          onPress={() => router.push(`/deck/${firstDeckWithDue.id}/review`)}
+          onPress={() => {
+            preloadDeck(firstDeckWithDue.id);
+            router.push(`/deck/${firstDeckWithDue.id}/review`);
+          }}
           style={styles.reviewBtn}
         />
       )}
@@ -80,7 +88,7 @@ export default function HomeScreen() {
           <TouchableOpacity onPress={() => router.push('/import/apkg')} style={styles.headerBtn}>
             <Ionicons name="download-outline" size={26} color={Colors.accent} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => router.push('/deck/new')}>
+          <TouchableOpacity testID="create-deck-button" onPress={() => router.push('/deck/new')}>
             <Ionicons name="add-circle" size={28} color={Colors.primary} />
           </TouchableOpacity>
         </View>
@@ -96,13 +104,16 @@ export default function HomeScreen() {
           <View style={styles.empty}>
             <Ionicons name="albums-outline" size={48} color={Colors.textMuted} />
             <Text style={styles.emptyText}>No decks yet</Text>
-            <Button title="Create Deck" onPress={() => router.push('/deck/new')} />
+            <Button title="Create Deck" testID="create-deck-empty-button" onPress={() => router.push('/deck/new')} />
           </View>
         }
         renderItem={({ item }) => (
           <TouchableOpacity
             style={styles.deckItem}
-            onPress={() => router.push(`/deck/${item.id}`)}
+            onPress={() => {
+              preloadDeck(item.id);
+              router.push(`/deck/${item.id}`);
+            }}
           >
             <View>
               <Text style={styles.deckName}>{item.name}</Text>

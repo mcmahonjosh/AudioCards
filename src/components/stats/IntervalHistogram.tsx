@@ -8,6 +8,7 @@ import {
   formatCountAxisLabel,
   histogramAxisLabels,
   niceMaxValue,
+  chartSeriesKey,
 } from './chartAxis';
 import { StatsChartFrame } from './StatsChartFrame';
 
@@ -36,6 +37,7 @@ export function IntervalHistogram({ data, width }: IntervalHistogramProps) {
     >
       <View style={styles.container}>
         <BarChart
+          key={chartSeriesKey(data.bins.map((b) => b.count))}
           width={chartWidth}
           height={180}
           data={barData}

@@ -20,6 +20,8 @@ import {
   PasteCardsState,
 } from '@/src/components/import/PasteCardsPanel';
 import { createDeck } from '@/src/db/repositories';
+import { invalidateStatsData } from '@/src/context/statsInvalidation';
+import { invalidateAllDecks } from '@/src/context/deckInvalidation';
 import {
   importCsvToDeck,
   importPastedRowsToDeck,
@@ -96,8 +98,8 @@ export default function NewDeckScreen() {
     const hasPaste = cardSource === 'paste' && (pasteState?.hasText ?? false);
     const hasCsv = cardSource === 'csv' && csvFileUri;
 
-    if (hasPaste) {
-      if (pasteState?.parseResult.configError) {
+    if (hasPaste && pasteState) {
+      if (pasteState.parseResult.configError) {
         Alert.alert('Invalid settings', pasteState.parseResult.configError);
         return;
       }
@@ -115,6 +117,8 @@ export default function NewDeckScreen() {
     setLoading(true);
     try {
       const deck = await createDeck({ name: name.trim(), frontLocale, backLocale });
+      invalidateStatsData();
+      invalidateAllDecks();
 
       if (hasPaste && pasteState) {
         const result = await importPastedRowsToDeck(deck.id, pasteState.parseResult.rows);
@@ -163,6 +167,7 @@ export default function NewDeckScreen() {
       >
         <Text style={styles.label}>Deck Name</Text>
         <TextInput
+          testID="deck-name-input"
           style={styles.input}
           value={name}
           onChangeText={setName}
@@ -179,7 +184,7 @@ export default function NewDeckScreen() {
 
         <Text style={[styles.section, styles.cardsSection]}>Add cards (optional)</Text>
         <Text style={styles.hint}>
-          Paste text, import a CSV file, or import an Anki deck. CSV uses the first two columns when
+          Paste text, import a CSV file, or import an Anki deck (currently has support for anki text and images but not audio). CSV uses the first two columns when
           front/back headers are missing.
         </Text>
 
@@ -209,7 +214,7 @@ export default function NewDeckScreen() {
         <Text style={styles.subsection}>Or paste text</Text>
         <PasteCardsPanel onChange={handlePasteChange} />
 
-        <Button title={createTitle} onPress={handleCreate} loading={loading} style={styles.createBtn} />
+        <Button title={createTitle} testID="create-deck-submit" onPress={handleCreate} loading={loading} style={styles.createBtn} />
       </ScrollView>
 
       <VoicePicker

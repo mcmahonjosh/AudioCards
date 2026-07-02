@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,28 +12,23 @@ import {
   Platform,
   ScrollView,
   Switch,
+  ActivityIndicator,
+  InteractionManager,
 } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, FontSize } from '@/constants/Colors';
 import { Button } from '@/src/components/Button';
-import {
-  getDeckById,
-  getCardsWithScheduling,
-  getReviewsToday,
-  getNewCardsIntroducedToday,
-  updateDeck,
-  deleteDeck,
-} from '@/src/db/repositories';
+import { updateDeck, deleteDeck } from '@/src/db/repositories';
 import { pickAndImportCsv, pickApkgFile, importPastedRowsToDeck } from '@/src/services/import/ImportService';
+import { invalidateStatsData } from '@/src/context/statsInvalidation';
+import { invalidateAllDecks, useDeckCache } from '@/src/context/DeckCacheContext';
 import {
   PasteCardsPanel,
   PasteCardsState,
 } from '@/src/components/import/PasteCardsPanel';
-import { Deck, CardWithScheduling } from '@/src/models/types';
+import { CardWithScheduling } from '@/src/models/types';
 import { getLocaleLabel } from '@/src/services/tts/locales';
 import { formatDueAt } from '@/src/scheduler/time';
-import { getDeckSessionCounts, SessionCounts } from '@/src/scheduler/sessionQueue';
 import { ttsService } from '@/src/services/tts/TtsService';
 import { describeVoice } from '@/src/services/tts/voiceMatcher';
 import {
@@ -58,11 +53,20 @@ function cardDueLabel(scheduling: CardWithScheduling['scheduling']): string {
 export default function DeckScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { settings } = useAppContext();
-  const [deck, setDeck] = useState<Deck | null>(null);
-  const [cards, setCards] = useState<CardWithScheduling[]>([]);
-  const [sessionCounts, setSessionCounts] = useState<SessionCounts>({ new: 0, learning: 0, review: 0 });
-  const [reviewsToday, setReviewsToday] = useState(0);
-  const [newCardsIntroducedToday, setNewCardsIntroducedToday] = useState(0);
+  const {
+    getDeckSnapshot,
+    getDeckStatus,
+    isDeckRefreshing,
+    isDeckStale,
+    refreshDeckData,
+    preloadDeck,
+  } = useDeckCache();
+  const snapshot = id ? getDeckSnapshot(id) : null;
+  const deck = snapshot?.deck ?? null;
+  const cards = snapshot?.cards ?? [];
+  const sessionCounts = snapshot?.sessionCounts ?? { new: 0, learning: 0, review: 0 };
+  const reviewsToday = snapshot?.reviewsToday ?? 0;
+  const newCardsIntroducedToday = snapshot?.newCardsIntroducedToday ?? 0;
   const [importModal, setImportModal] = useState(false);
   const [importTab, setImportTab] = useState<'csv' | 'apkg' | 'paste'>('csv');
   const [pasteState, setPasteState] = useState<PasteCardsState | null>(null);
@@ -75,32 +79,40 @@ export default function DeckScreen() {
   const [frontVoiceLabel, setFrontVoiceLabel] = useState('');
   const [backVoiceLabel, setBackVoiceLabel] = useState('');
 
-  const load = useCallback(async () => {
-    if (!id) return;
-    const d = await getDeckById(id);
-    setDeck(d);
-    const loadedCards = await getCardsWithScheduling(id);
-    setCards(loadedCards);
-    const introducedToday = await getNewCardsIntroducedToday(id);
-    setNewCardsIntroducedToday(introducedToday);
-    const effectiveLimit = d
-      ? getEffectiveNewCardsPerDay(d, settings)
-      : settings.defaultNewCardsPerDay;
-    setSessionCounts(
-      getDeckSessionCounts(loadedCards, new Date(), {
-        newCardsLimit: effectiveLimit,
-        newCardsIntroducedToday: introducedToday,
-      }),
-    );
-    setReviewsToday(await getReviewsToday(id));
-    await ttsService.initialize();
-    if (d) {
-      setFrontVoiceLabel(describeVoice(ttsService.resolveVoice(d.frontLocale)));
-      setBackVoiceLabel(describeVoice(ttsService.resolveVoice(d.backLocale)));
-    }
-  }, [id, settings.defaultNewCardsPerDay]);
+  const reloadDeck = useCallback(() => {
+    if (!id) return Promise.resolve(null);
+    return refreshDeckData(id);
+  }, [id, refreshDeckData]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(
+    useCallback(() => {
+      if (!id) return;
+      preloadDeck(id);
+      const task = InteractionManager.runAfterInteractions(() => {
+        if (isDeckStale(id) || !getDeckSnapshot(id)) {
+          void refreshDeckData(id);
+        }
+      });
+      return () => task.cancel();
+    }, [id, preloadDeck, isDeckStale, getDeckSnapshot, refreshDeckData]),
+  );
+
+  useEffect(() => {
+    if (!deck) {
+      setFrontVoiceLabel('');
+      setBackVoiceLabel('');
+      return;
+    }
+
+    const task = InteractionManager.runAfterInteractions(() => {
+      ttsService.initialize().then(() => {
+        setFrontVoiceLabel(describeVoice(ttsService.resolveVoice(deck.frontLocale)));
+        setBackVoiceLabel(describeVoice(ttsService.resolveVoice(deck.backLocale)));
+      });
+    });
+
+    return () => task.cancel();
+  }, [deck?.id, deck?.frontLocale, deck?.backLocale]);
 
   const handleImportCsv = async () => {
     if (!id) return;
@@ -111,7 +123,7 @@ export default function DeckScreen() {
         `Created ${result.created} cards. Skipped ${result.skipped}.${result.errors.length ? `\n\nErrors:\n${result.errors.slice(0, 3).join('\n')}` : ''}`,
       );
       setImportModal(false);
-      load();
+      reloadDeck();
     }
   };
 
@@ -145,7 +157,7 @@ export default function DeckScreen() {
         `Created ${result.created} cards. Skipped ${result.skipped}.${result.errors.length ? `\n\nErrors:\n${result.errors.slice(0, 3).join('\n')}` : ''}`,
       );
       setImportModal(false);
-      load();
+      reloadDeck();
     } catch (e) {
       Alert.alert('Import Failed', e instanceof Error ? e.message : 'Import failed');
     } finally {
@@ -179,7 +191,7 @@ export default function DeckScreen() {
     try {
       await updateDeck(id, { config: nextConfig });
       setSchedulerModal(false);
-      load();
+      reloadDeck();
     } catch {
       Alert.alert('Save failed', 'Could not update scheduler settings.');
     }
@@ -195,7 +207,7 @@ export default function DeckScreen() {
     try {
       await updateDeck(id, { name: next });
       setRenameModal(false);
-      load();
+      reloadDeck();
     } catch {
       Alert.alert('Rename failed', 'Could not rename this deck.');
     }
@@ -214,6 +226,8 @@ export default function DeckScreen() {
           onPress: async () => {
             try {
               await deleteDeck(id);
+              invalidateStatsData();
+              invalidateAllDecks();
               router.back();
             } catch {
               Alert.alert('Delete failed', 'Could not delete this deck.');
@@ -224,10 +238,26 @@ export default function DeckScreen() {
     );
   };
 
+  const deckStatus = id ? getDeckStatus(id) : 'idle';
+  const deckRefreshing = id ? isDeckRefreshing(id) : false;
+  const showColdLoading = !deck && deckStatus === 'loading';
+
+  if (showColdLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={styles.loading}>Loading deck…</Text>
+      </View>
+    );
+  }
+
   if (!deck) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.loading}>Loading...</Text>
+      <View style={styles.loadingContainer}>
+        <Text style={styles.loading}>Deck not found.</Text>
+        <TouchableOpacity onPress={() => id && reloadDeck()}>
+          <Text style={styles.retryText}>Tap to retry</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -239,6 +269,9 @@ export default function DeckScreen() {
 
   return (
     <View style={styles.container}>
+      {deckRefreshing ? (
+        <Text style={styles.updatingText}>Updating…</Text>
+      ) : null}
       <View style={styles.statsRow}>
         <MiniStat label="New" value={sessionCounts.new} />
         <MiniStat label="Learning" value={sessionCounts.learning} />
@@ -256,18 +289,24 @@ export default function DeckScreen() {
       <View style={styles.actions}>
         <Button
           title="Start Review"
+          testID="deck-start-review-button"
           subtitle={
             queueTotal > 0
               ? `${queueTotal} in queue (${sessionCounts.new} new, ${sessionCounts.learning} learning, ${sessionCounts.review} review)`
               : 'Nothing due right now'
           }
-          onPress={() => router.push(`/deck/${id}/review`)}
+          onPress={() => {
+            if (!id) return;
+            void refreshDeckData(id);
+            router.push(`/deck/${id}/review`);
+          }}
           disabled={queueTotal === 0}
           style={styles.actionBtn}
         />
         <View style={styles.secondaryActions}>
           <Button
             title="Add Card"
+            testID="deck-add-card-button"
             variant="secondary"
             onPress={() => router.push(`/card/new?deckId=${id}`)}
             style={styles.smallBtn}
@@ -292,11 +331,13 @@ export default function DeckScreen() {
             onPress={openRename}
             style={styles.smallBtn}
           />
+        </View>
+        <View style={styles.centeredActionRow}>
           <Button
             title="Delete"
             variant="ghost"
             onPress={confirmDelete}
-            style={styles.smallBtn}
+            style={styles.deleteBtn}
           />
         </View>
       </View>
@@ -488,7 +529,22 @@ function MiniStat({ label, value }: { label: string; value: number }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  loading: { color: Colors.textMuted, textAlign: 'center', marginTop: Spacing.xl },
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: Colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.md,
+    padding: Spacing.md,
+  },
+  loading: { color: Colors.textMuted, textAlign: 'center', fontSize: FontSize.md },
+  retryText: { color: Colors.primary, fontSize: FontSize.md, fontWeight: '600' },
+  updatingText: {
+    color: Colors.textMuted,
+    fontSize: FontSize.sm,
+    textAlign: 'center',
+    paddingTop: Spacing.sm,
+  },
   statsRow: { flexDirection: 'row', padding: Spacing.md, gap: Spacing.sm },
   miniStat: {
     flex: 1,
@@ -513,6 +569,8 @@ const styles = StyleSheet.create({
   actionBtn: { marginBottom: Spacing.sm },
   secondaryActions: { flexDirection: 'row', gap: Spacing.sm },
   secondaryActionsSpaced: { marginTop: Spacing.sm },
+  centeredActionRow: { marginTop: Spacing.sm, alignItems: 'center' },
+  deleteBtn: { minWidth: 160, paddingHorizontal: Spacing.xl },
   schedulerRow: {
     flexDirection: 'row',
     alignItems: 'center',

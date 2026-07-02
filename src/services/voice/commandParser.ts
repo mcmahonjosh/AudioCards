@@ -26,26 +26,42 @@ function levenshtein(a: string, b: string): number {
   return matrix[b.length][a.length];
 }
 
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export function parseVoiceCommand(transcript: string): VoiceCommand | null {
   const normalized = normalize(transcript);
   if (!normalized) return null;
 
-  // Exact match on full transcript or any word
+  // Exact full-transcript match (multi-word aliases like "show answer")
   for (const def of VOICE_COMMANDS) {
     for (const alias of def.aliases) {
       const normAlias = normalize(alias);
       if (normalized === normAlias) return def.command;
-      if (normalized.includes(normAlias)) return def.command;
     }
   }
 
-  // Fuzzy match for single-word commands
-  const words = normalized.split(/\s+/);
+  // Multi-word alias phrase match only (not single-word substring bleed from card/TTS text)
+  for (const def of VOICE_COMMANDS) {
+    for (const alias of def.aliases) {
+      const normAlias = normalize(alias);
+      if (!normAlias.includes(' ')) continue;
+      const pattern = new RegExp(`\\b${escapeRegex(normAlias).replace(/\s+/g, '\\s+')}\\b`);
+      if (pattern.test(normalized)) return def.command;
+    }
+  }
+
+  const words = normalized.split(/\s+/).filter(Boolean);
+  // Short utterances only — avoids rating from long TTS/card audio transcripts
+  if (words.length > 2) return null;
+
   for (const word of words) {
     for (const def of VOICE_COMMANDS) {
       for (const alias of def.aliases) {
         const normAlias = normalize(alias);
         if (normAlias.includes(' ')) continue;
+        if (word === normAlias) return def.command;
         const dist = levenshtein(word, normAlias);
         if (dist <= 1 && word.length >= 3) return def.command;
       }

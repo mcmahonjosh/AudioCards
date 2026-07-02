@@ -351,13 +351,18 @@ export class Sm2Scheduler implements SpacedRepetitionScheduler {
       ease = ease + config.easyEaseBonus;
     }
 
+    const goodInterval = Math.max(1, Math.round(intervalDays * ease));
+
     let nextInterval: number;
     if (rating === 'hard') {
       nextInterval = Math.max(1, Math.round(intervalDays * config.hardMultiplier));
     } else if (rating === 'good') {
-      nextInterval = Math.max(1, Math.round(intervalDays * ease));
+      nextInterval = goodInterval;
     } else {
-      nextInterval = Math.max(1, Math.round(intervalDays * ease * config.easyBonus));
+      nextInterval = Math.max(
+        Math.max(1, Math.round(intervalDays * ease * config.easyBonus)),
+        goodInterval + 1,
+      );
     }
 
     nextInterval = Math.min(nextInterval, config.maximumIntervalDays);

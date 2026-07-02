@@ -22,7 +22,7 @@ import type {
 export function parseDeckConfig(json: string): DeckSchedulerConfig {
   const parsed = JSON.parse(json) as Record<string, unknown>;
   if (parsed.algorithm === 'fsrs') {
-    return parsed as DeckSchedulerConfig;
+    return parsed as unknown as DeckSchedulerConfig;
   }
   return normalizeSm2DeckConfig(parsed);
 }

@@ -131,6 +131,7 @@ export const MACRO_REGION_LABELS: Record<string, string> = {
 export function normalizeRegionSubtag(region: string): string {
   const r = region.toLowerCase();
   if (/^[a-z]{2}$/.test(r) || /^\d{3}$/.test(r)) return r;
+  if (r === 'eds') return 'es';
   if (r.startsWith('es')) return 'es';
   if (r.startsWith('ie')) return 'ie';
   if (r.startsWith('us')) return 'us';

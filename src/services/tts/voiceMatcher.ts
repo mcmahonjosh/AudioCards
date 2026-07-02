@@ -1,4 +1,3 @@
-import * as Speech from 'expo-speech';
 import { canonicalLocale, CURATED_LOCALES, getLocaleLabel, languagePrefix, normalizeLocale } from './locales';
 
 export interface VoiceInfo {
@@ -13,7 +12,7 @@ const SPANISH_REGIONS = new Set(['es-mx', 'es-es', 'es-419', 'es-us', 'es-001', 
 
 function parseRegionFromIdentifier(identifier: string): string | null {
   const match = identifier.match(
-    /(?:voice\.(?:compact|enhanced|premium)\.)?([a-z]{2}(?:-[a-z0-9]+)?)\./i,
+    /voice\.(?:compact|enhanced|premium)\.([a-z]{2}(?:-[a-z0-9]+)?)\./i,
   );
   return match ? normalizeLocale(match[1]).toLowerCase() : null;
 }
@@ -214,6 +213,7 @@ export async function loadAvailableVoices(
   maxRetries = 10,
   delayMs = 1000,
 ): Promise<VoiceInfo[]> {
+  const Speech = await import('expo-speech');
   let voices = await Speech.getAvailableVoicesAsync();
 
   if (voices.length === 0) {

@@ -28,6 +28,9 @@ import { getEffectiveNewCardsPerDay } from '@/src/scheduler/newCardLimits';
 import { ttsService } from '@/src/services/tts/TtsService';
 import { cardMediaService } from '@/src/services/media/CardMediaService';
 import { voiceCommandService } from '@/src/services/voice/VoiceCommandService';
+import { invalidateStatsData } from '@/src/context/statsInvalidation';
+import { invalidateDeck } from '@/src/context/deckInvalidation';
+import { ReviewInitialSnapshot } from '@/src/context/deckSnapshot';
 import { VoiceCommand } from '@/src/services/voice/commands';
 import { ratingFromCommand } from '@/src/services/voice/commandParser';
 import { ReviewPhase, VoiceActivity } from './types';
@@ -41,6 +44,7 @@ export interface ReviewSessionOptions {
   autoPlayFront?: boolean;
   autoPlayBack?: boolean;
   handsFreeMode?: boolean;
+  initialSnapshot?: ReviewInitialSnapshot;
 }
 
 type StateListener = (state: {
@@ -54,6 +58,7 @@ type StateListener = (state: {
 }) => void;
 
 const CARD_SPEAK_DELAY_MS = 1000;
+const VOICE_COMMAND_COOLDOWN_MS = 900;
 
 export class ReviewSessionController {
   private deckId: string;
@@ -71,6 +76,25 @@ export class ReviewSessionController {
   private unsubVoice: (() => void) | null = null;
   private cardTransitionTimer: ReturnType<typeof setTimeout> | null = null;
   private destroyed = false;
+  private sessionEnded = false;
+  private voiceCommandAllowedAfter = 0;
+
+  private openVoiceCommandsAfterTts(): void {
+    this.voiceCommandAllowedAfter = Date.now() + VOICE_COMMAND_COOLDOWN_MS;
+  }
+
+  private isVoiceCommandAllowed(cmd: VoiceCommand): boolean {
+    if (Date.now() >= this.voiceCommandAllowedAfter) return true;
+    const rating = ratingFromCommand(cmd);
+    if (rating || cmd === 'end' || cmd === 'flip') {
+      return false;
+    }
+    return true;
+  }
+
+  private isSessionActive(): boolean {
+    return !this.destroyed && !this.sessionEnded && this.phase !== 'complete';
+  }
 
   constructor(options: ReviewSessionOptions) {
     this.deckId = options.deckId;
@@ -111,22 +135,38 @@ export class ReviewSessionController {
   }
 
   async initialize(): Promise<void> {
-    const deck = await getDeckById(this.deckId);
-    if (!deck) throw new Error('Deck not found');
-    this.config = deck.config as Sm2DeckConfig;
+    const snapshot = this.options.initialSnapshot;
 
-    const cards = await getCardsWithScheduling(this.deckId);
-    const introducedToday = await getNewCardsIntroducedToday(this.deckId);
-    const newCardsLimit = getEffectiveNewCardsPerDay(deck, {
-      defaultNewCardsPerDay:
-        this.options.defaultNewCardsPerDay ?? DEFAULT_SETTINGS.defaultNewCardsPerDay,
-    });
+    if (snapshot) {
+      this.config = snapshot.deck.config as Sm2DeckConfig;
+      const newCardsLimit = getEffectiveNewCardsPerDay(snapshot.deck, {
+        defaultNewCardsPerDay:
+          this.options.defaultNewCardsPerDay ?? DEFAULT_SETTINGS.defaultNewCardsPerDay,
+      });
 
-    this.queue = buildInitialSessionQueue(cards, new Date(), {
-      includeNewCards: this.options.includeNewCards ?? true,
-      newCardsLimit,
-      newCardsIntroducedToday: introducedToday,
-    });
+      this.queue = buildInitialSessionQueue(snapshot.cards, new Date(), {
+        includeNewCards: this.options.includeNewCards ?? true,
+        newCardsLimit,
+        newCardsIntroducedToday: snapshot.newCardsIntroducedToday,
+      });
+    } else {
+      const deck = await getDeckById(this.deckId);
+      if (!deck) throw new Error('Deck not found');
+      this.config = deck.config as Sm2DeckConfig;
+
+      const cards = await getCardsWithScheduling(this.deckId);
+      const introducedToday = await getNewCardsIntroducedToday(this.deckId);
+      const newCardsLimit = getEffectiveNewCardsPerDay(deck, {
+        defaultNewCardsPerDay:
+          this.options.defaultNewCardsPerDay ?? DEFAULT_SETTINGS.defaultNewCardsPerDay,
+      });
+
+      this.queue = buildInitialSessionQueue(cards, new Date(), {
+        includeNewCards: this.options.includeNewCards ?? true,
+        newCardsLimit,
+        newCardsIntroducedToday: introducedToday,
+      });
+    }
 
     if (this.queue.length === 0) {
       this.phase = 'complete';
@@ -156,11 +196,12 @@ export class ReviewSessionController {
   }
 
   private async advanceToNext(): Promise<void> {
-    if (this.destroyed) return;
+    if (!this.isSessionActive()) return;
 
     const pick = pickNextCard(this.queue, new Date());
 
     if (pick.type === 'done') {
+      this.sessionEnded = true;
       this.currentCard = null;
       this.phase = 'complete';
       this.voiceActivity = 'idle';
@@ -175,7 +216,7 @@ export class ReviewSessionController {
     this.notify();
 
     await this.delayBeforeCardSpeak();
-    if (this.destroyed || this.phase === 'paused' || !this.currentCard) return;
+    if (!this.isSessionActive() || !this.currentCard) return;
 
     await this.playFrontIfEnabled();
   }
@@ -187,6 +228,8 @@ export class ReviewSessionController {
   }
 
   private async handleCommand(cmd: VoiceCommand): Promise<void> {
+    if (!this.isVoiceCommandAllowed(cmd)) return;
+
     if (this.phase === 'complete' || this.phase === 'paused') {
       if (cmd === 'resume' && this.phase === 'paused') await this.resume();
       if (cmd === 'end') await this.endSession();
@@ -217,7 +260,7 @@ export class ReviewSessionController {
   }
 
   private async startListening(): Promise<void> {
-    if (!this.options.handsFreeMode || this.phase === 'paused') return;
+    if (!this.options.handsFreeMode || !this.isSessionActive() || this.phase === 'paused') return;
     this.voiceActivity = 'listening';
     this.notify();
     await voiceCommandService.start();
@@ -241,7 +284,7 @@ export class ReviewSessionController {
 
   async speakFront(): Promise<void> {
     const card = this.currentCard;
-    if (!card) return;
+    if (!card || !this.isSessionActive()) return;
 
     await this.stopListening();
     this.phase = 'speaking_front';
@@ -263,7 +306,10 @@ export class ReviewSessionController {
       // playback failure — continue to listening
     }
 
+    if (!this.isSessionActive()) return;
+
     this.phase = 'front';
+    this.openVoiceCommandsAfterTts();
     await this.startListening();
   }
 
@@ -278,13 +324,14 @@ export class ReviewSessionController {
       await this.speakBack();
     } else {
       this.phase = 'rating';
+      this.notify();
       await this.startListening();
     }
   }
 
   async speakBack(): Promise<void> {
     const card = this.currentCard;
-    if (!card) return;
+    if (!card || !this.isSessionActive()) return;
 
     this.phase = 'speaking_back';
     this.voiceActivity = 'speaking';
@@ -307,7 +354,10 @@ export class ReviewSessionController {
       // continue
     }
 
+    if (!this.isSessionActive()) return;
+
     this.phase = 'rating';
+    this.openVoiceCommandsAfterTts();
     await this.startListening();
   }
 
@@ -352,10 +402,15 @@ export class ReviewSessionController {
       card.scheduling = result.card;
       this.cardsReviewed++;
 
+      invalidateStatsData();
+      invalidateDeck(this.deckId);
+
       this.queue = this.queue.filter((c) => c.id !== card.id);
       if (!leavesSessionForToday(result.nextDueAt)) {
         this.queue = reinsertCardByDue(this.queue, card);
       }
+
+      if (!this.isSessionActive()) return;
 
       await this.advanceToNext();
     } catch (error) {
@@ -385,12 +440,13 @@ export class ReviewSessionController {
   }
 
   async endSession(): Promise<void> {
+    this.sessionEnded = true;
     this.cancelCardTransition();
-    await this.stopListening();
-    await cardMediaService.stop();
     this.currentCard = null;
     this.phase = 'complete';
     this.voiceActivity = 'idle';
+    voiceCommandService.stop();
+    await cardMediaService.stop();
     this.notify();
   }
 

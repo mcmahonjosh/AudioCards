@@ -122,6 +122,16 @@ describe('Sm2Scheduler', () => {
     assert.equal(sm2(result.card).ease, 2.3);
   });
 
+  it('review 1-day card: good and easy previews differ', () => {
+    const card = reviewCard(1, 2.5);
+    const previews = scheduler.previewIntervals(card, now, config);
+
+    assert.equal(previews.hard.label, '1d');
+    assert.equal(previews.good.label, '3d');
+    assert.equal(previews.easy.label, '4d');
+    assert.notEqual(previews.good.label, previews.easy.label);
+  });
+
   it('review hard/good/easy interval math on 10-day card', () => {
     const card = reviewCard(10, 2.5);
 

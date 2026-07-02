@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,37 +7,18 @@ import {
   RefreshControl,
   TouchableOpacity,
   useWindowDimensions,
+  ActivityIndicator,
+  InteractionManager,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Colors, Spacing, FontSize } from '@/constants/Colors';
 import {
-  getTodayStats,
-  getFutureDueChart,
-  getCalendarHeatmap,
-  getReviewsChart,
-  getCardCountsBreakdown,
-  getIntervalHistogram,
-  getEaseHistogram,
-  getHourlyBreakdown,
-  getAnswerButtonGroups,
-  getAddedChart,
+  computeStatsFromRaw,
   formatDurationMs,
   type StatsRange,
   type IntervalRange,
-  type TodayStats,
-  type FutureDueChartData,
-  type CalendarHeatmapData,
-  type ReviewsChartData,
-  type CardCountsData,
-  type IntervalHistogramData,
-  type EaseHistogramData,
-  type HourlyPoint,
-  type AnswerButtonGroupData,
-  type AddedChartData,
 } from '@/src/stats/StatsAggregator';
-import { getAllDecks } from '@/src/db/repositories';
-import { Deck } from '@/src/models/types';
-import { useAppContext } from '@/src/context/AppContext';
+import { useStatsContext } from '@/src/context/StatsContext';
 import {
   StatsSectionCard,
   StatsRadioRow,
@@ -74,32 +55,21 @@ const INTERVAL_OPTIONS: { value: IntervalRange; label: string }[] = [
 
 export default function StatsScreen() {
   const { width } = useWindowDimensions();
-  const { dbReady } = useAppContext();
-  const [decks, setDecks] = useState<Deck[]>([]);
+  const { rawData, status, isRefreshing, isStale, refreshStatsData } = useStatsContext();
   const [selectedDeckId, setSelectedDeckId] = useState<string | null>(null);
   const [globalHistory, setGlobalHistory] = useState<GlobalHistory>('12m');
   const [refreshing, setRefreshing] = useState(false);
 
-  const [today, setToday] = useState<TodayStats | null>(null);
   const [futureDueRange, setFutureDueRange] = useState<StatsRange>('1m');
   const [futureDueBacklog, setFutureDueBacklog] = useState(false);
-  const [futureDue, setFutureDue] = useState<FutureDueChartData | null>(null);
   const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
-  const [calendar, setCalendar] = useState<CalendarHeatmapData | null>(null);
   const [reviewsRange, setReviewsRange] = useState<StatsRange>('1m');
   const [reviewsTimeMode, setReviewsTimeMode] = useState(false);
-  const [reviews, setReviews] = useState<ReviewsChartData | null>(null);
   const [separateSuspended, setSeparateSuspended] = useState(true);
-  const [cardCounts, setCardCounts] = useState<CardCountsData | null>(null);
   const [intervalRange, setIntervalRange] = useState<IntervalRange>('1m');
-  const [intervals, setIntervals] = useState<IntervalHistogramData | null>(null);
-  const [ease, setEase] = useState<EaseHistogramData | null>(null);
   const [hourlyRange, setHourlyRange] = useState<StatsRange>('1m');
-  const [hourly, setHourly] = useState<HourlyPoint[]>([]);
   const [answerRange, setAnswerRange] = useState<StatsRange>('1m');
-  const [answerButtons, setAnswerButtons] = useState<AnswerButtonGroupData[]>([]);
   const [addedRange, setAddedRange] = useState<StatsRange>('1m');
-  const [added, setAdded] = useState<AddedChartData | null>(null);
 
   useEffect(() => {
     const defaultRange: StatsRange = globalHistory === '12m' ? '1y' : 'all';
@@ -111,48 +81,25 @@ export default function StatsScreen() {
   }, [globalHistory]);
 
   const deckId = selectedDeckId ?? undefined;
+  const decks = rawData?.decks ?? [];
 
-  const load = useCallback(async () => {
-    if (!dbReady) return;
-    const allDecks = await getAllDecks();
-    setDecks(allDecks);
-
-    const [
-      todayData,
-      futureDueData,
-      calendarData,
-      reviewsData,
-      countsData,
-      intervalData,
-      easeData,
-      hourlyData,
-      answerData,
-      addedData,
-    ] = await Promise.all([
-      getTodayStats(deckId),
-      getFutureDueChart(deckId, { range: futureDueRange, includeBacklog: futureDueBacklog }),
-      getCalendarHeatmap(deckId, calendarYear),
-      getReviewsChart(deckId, { range: reviewsRange, mode: reviewsTimeMode ? 'time' : 'count' }),
-      getCardCountsBreakdown(deckId, { separateSuspended }),
-      getIntervalHistogram(deckId, intervalRange),
-      getEaseHistogram(deckId),
-      getHourlyBreakdown(deckId, hourlyRange),
-      getAnswerButtonGroups(deckId, answerRange),
-      getAddedChart(deckId, addedRange),
-    ]);
-
-    setToday(todayData);
-    setFutureDue(futureDueData);
-    setCalendar(calendarData);
-    setReviews(reviewsData);
-    setCardCounts(countsData);
-    setIntervals(intervalData);
-    setEase(easeData);
-    setHourly(hourlyData);
-    setAnswerButtons(answerData);
-    setAdded(addedData);
+  const computed = useMemo(() => {
+    if (!rawData) return null;
+    return computeStatsFromRaw(rawData, {
+      deckId,
+      futureDueRange,
+      futureDueBacklog,
+      calendarYear,
+      reviewsRange,
+      reviewsTimeMode,
+      separateSuspended,
+      intervalRange,
+      hourlyRange,
+      answerRange,
+      addedRange,
+    });
   }, [
-    dbReady,
+    rawData,
     deckId,
     futureDueRange,
     futureDueBacklog,
@@ -166,36 +113,85 @@ export default function StatsScreen() {
     addedRange,
   ]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(
+    useCallback(() => {
+      const task = InteractionManager.runAfterInteractions(() => {
+        if (isStale || !rawData) {
+          void refreshStatsData();
+        }
+      });
+      return () => task.cancel();
+    }, [isStale, rawData, refreshStatsData]),
+  );
 
-  useEffect(() => {
-    if (dbReady) load();
-  }, [selectedDeckId, dbReady, load]);
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await refreshStatsData();
+    setRefreshing(false);
+  }, [refreshStatsData]);
 
   const selectedDeckName =
     selectedDeckId === null
       ? 'All Decks'
       : decks.find((d) => d.id === selectedDeckId)?.name ?? 'Deck';
 
+  const showColdLoading = status === 'loading' && !rawData;
+  const showError = status === 'error' && !rawData;
+
+  if (showColdLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <View style={styles.header}>
+          <Text style={styles.loadingTitle}>Stats</Text>
+        </View>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={styles.loadingText}>Loading stats…</Text>
+      </View>
+    );
+  }
+
+  if (showError) {
+    return (
+      <View style={styles.loadingContainer}>
+        <Text style={styles.loadingText}>Could not load stats.</Text>
+        <TouchableOpacity onPress={() => void refreshStatsData()}>
+          <Text style={styles.retryText}>Tap to retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const today = computed?.today ?? null;
+  const futureDue = computed?.futureDue ?? null;
+  const calendar = computed?.calendar ?? null;
+  const reviews = computed?.reviews ?? null;
+  const cardCounts = computed?.cardCounts ?? null;
+  const intervals = computed?.intervals ?? null;
+  const ease = computed?.ease ?? null;
+  const hourly = computed?.hourly ?? [];
+  const answerButtons = computed?.answerButtons ?? [];
+  const added = computed?.added ?? null;
+
   return (
     <ScrollView
       style={styles.container}
       refreshControl={
         <RefreshControl
-          refreshing={refreshing}
-          onRefresh={async () => {
-            setRefreshing(true);
-            await load();
-            setRefreshing(false);
-          }}
+          refreshing={refreshing || isRefreshing}
+          onRefresh={handleRefresh}
           tintColor={Colors.primary}
         />
       }
     >
+      {isRefreshing && rawData ? (
+        <Text style={styles.updatingText}>Updating…</Text>
+      ) : null}
+
       <View style={styles.header}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
           <FilterChip
             label="All Decks"
+            testID="stats-filter-all"
             selected={selectedDeckId === null}
             onPress={() => setSelectedDeckId(null)}
           />
@@ -203,6 +199,7 @@ export default function StatsScreen() {
             <FilterChip
               key={d.id}
               label={d.name}
+              testID={`stats-filter-deck-${d.id}`}
               selected={selectedDeckId === d.id}
               onPress={() => setSelectedDeckId(d.id)}
             />
@@ -366,13 +363,16 @@ function FilterChip({
   label,
   selected,
   onPress,
+  testID,
 }: {
   label: string;
   selected: boolean;
   onPress: () => void;
+  testID?: string;
 }) {
   return (
     <TouchableOpacity
+      testID={testID}
       style={[styles.chip, selected && styles.chipSelected]}
       onPress={onPress}
     >
@@ -383,6 +383,28 @@ function FilterChip({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background, padding: Spacing.md },
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: Colors.background,
+    padding: Spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.md,
+  },
+  loadingTitle: {
+    color: Colors.text,
+    fontSize: FontSize.lg,
+    fontWeight: '700',
+    marginBottom: Spacing.lg,
+  },
+  loadingText: { color: Colors.textMuted, fontSize: FontSize.md },
+  retryText: { color: Colors.primary, fontSize: FontSize.md, fontWeight: '600' },
+  updatingText: {
+    color: Colors.textMuted,
+    fontSize: FontSize.sm,
+    textAlign: 'center',
+    marginBottom: Spacing.sm,
+  },
   header: { marginBottom: Spacing.sm },
   filterRow: { marginBottom: Spacing.sm, maxHeight: 40 },
   scopeLabel: { color: Colors.textMuted, fontSize: FontSize.sm, marginBottom: Spacing.xs },

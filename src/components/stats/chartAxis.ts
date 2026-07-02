@@ -19,6 +19,11 @@ export const CHART_AXIS = {
 export const PAST_DAY_BAR_WIDTH = 8;
 export const PAST_DAY_BAR_SPACING = 3;
 
+/** gifted-charts BarChart ignores data prop updates when isAnimated — key forces remount. */
+export function chartSeriesKey(values: readonly number[]): string {
+  return values.join('|');
+}
+
 export function formatCountAxisLabel(label: string): string {
   const n = Number(label);
   if (Number.isNaN(n)) return label;

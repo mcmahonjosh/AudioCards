@@ -1,0 +1,8 @@
+appId: com.joshuamcmahon.audiocards
+---
+- launchApp
+- tapOn: "Settings"
+- assertVisible: "Hands-free mode"
+- tapOn:
+    id: settings-hands-free-toggle
+- assertVisible: "Speech rate"

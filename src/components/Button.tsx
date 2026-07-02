@@ -16,6 +16,7 @@ interface Props {
   loading?: boolean;
   subtitle?: string;
   style?: object;
+  testID?: string;
 }
 
 const variantColors: Record<string, { bg: string; text: string }> = {
@@ -36,11 +37,13 @@ export function Button({
   loading,
   subtitle,
   style,
+  testID,
 }: Props) {
   const colors = variantColors[variant] ?? variantColors.primary;
 
   return (
     <TouchableOpacity
+      testID={testID}
       style={[
         styles.button,
         { backgroundColor: colors.bg },

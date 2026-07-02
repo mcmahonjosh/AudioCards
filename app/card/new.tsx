@@ -14,6 +14,8 @@ import { LocaleButton } from '@/src/components/LocalePicker';
 import { VoicePicker } from '@/src/components/VoicePicker';
 import { CardContentRenderer } from '@/src/components/card/CardContentRenderer';
 import { createCard, getDeckById } from '@/src/db/repositories';
+import { invalidateStatsData } from '@/src/context/statsInvalidation';
+import { invalidateDeck } from '@/src/context/deckInvalidation';
 import { ttsService } from '@/src/services/tts/TtsService';
 import { useAppContext } from '@/src/context/AppContext';
 
@@ -64,6 +66,8 @@ export default function NewCardScreen() {
         backLocale,
         contentFormat: 'plain',
       });
+      invalidateStatsData();
+      if (deckId) invalidateDeck(deckId);
       router.back();
     } catch {
       Alert.alert('Error', 'Failed to create card');
@@ -76,6 +80,7 @@ export default function NewCardScreen() {
     <ScrollView style={styles.container}>
       <Text style={styles.label}>Front</Text>
       <TextInput
+        testID="card-front-input"
         style={[styles.input, styles.multiline]}
         value={frontText}
         onChangeText={setFrontText}
@@ -95,6 +100,7 @@ export default function NewCardScreen() {
 
       <Text style={styles.label}>Back</Text>
       <TextInput
+        testID="card-back-input"
         style={[styles.input, styles.multiline]}
         value={backText}
         onChangeText={setBackText}
@@ -112,7 +118,7 @@ export default function NewCardScreen() {
       <LocaleButton locale={backLocale} label="Back Language" onPress={() => setPicker('back')} />
       <Button title="Preview Back Audio" variant="secondary" onPress={previewBack} style={styles.previewBtn} />
 
-      <Button title="Save Card" onPress={handleSave} loading={loading} style={styles.saveBtn} />
+      <Button title="Save Card" testID="save-card-button" onPress={handleSave} loading={loading} style={styles.saveBtn} />
 
       <VoicePicker visible={picker === 'front'} selectedLocale={frontLocale} onSelect={setFrontLocale} onClose={() => setPicker(null)} title="Front Language" />
       <VoicePicker visible={picker === 'back'} selectedLocale={backLocale} onSelect={setBackLocale} onClose={() => setPicker(null)} title="Back Language" />

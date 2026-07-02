@@ -8,6 +8,7 @@ import {
   formatCountAxisLabel,
   histogramAxisLabels,
   niceMaxValue,
+  chartSeriesKey,
 } from './chartAxis';
 import { StatsChartFrame } from './StatsChartFrame';
 
@@ -33,6 +34,7 @@ export function EaseHistogram({ data, width }: EaseHistogramProps) {
     <StatsChartFrame yAxisLabel="Cards" xAxisLabel="Ease (%)">
       <View style={styles.container}>
         <BarChart
+          key={chartSeriesKey(data.bins.map((b) => b.count))}
           width={chartWidth}
           height={180}
           data={chartData}

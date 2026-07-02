@@ -1,11 +1,13 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { SQLiteProvider } from 'expo-sqlite';
-import { runMigrations, DATABASE_NAME } from '@/src/db/client';
+import { DATABASE_NAME } from '@/src/db/client';
+import { runMigrations } from '@/src/db/nativeClient';
 import { getAppSettings, saveAppSettings } from '@/src/db/repositories';
 import { AppSettings } from '@/src/models/types';
 import { DEFAULT_SETTINGS } from '@/src/constants';
 import { setupAudioOnLaunch } from '@/src/services/audio/audioSetup';
 import { SafetyNoticeModal } from '@/src/components/SafetyNoticeModal';
+import { VoiceIntroModal } from '@/src/components/VoiceIntroModal';
 
 interface AppContextValue {
   settings: AppSettings;
@@ -21,7 +23,12 @@ const AppContext = createContext<AppContextValue>({
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   return (
-    <SQLiteProvider databaseName={DATABASE_NAME} onInit={() => runMigrations()}>
+    <SQLiteProvider
+      databaseName={DATABASE_NAME}
+      onInit={async () => {
+        runMigrations();
+      }}
+    >
       <AppContextInner>{children}</AppContextInner>
     </SQLiteProvider>
   );
@@ -49,8 +56,17 @@ function AppContextInner({ children }: { children: React.ReactNode }) {
     await updateSettings({ safetyNoticeAcknowledged: true });
   };
 
+  const acknowledgeVoiceIntro = async () => {
+    await updateSettings({ voiceIntroAcknowledged: true });
+  };
+
   const showSafetyNotice =
     dbReady && !settings.safetyNoticeAcknowledged;
+
+  const showVoiceIntro =
+    dbReady &&
+    settings.safetyNoticeAcknowledged &&
+    !settings.voiceIntroAcknowledged;
 
   return (
     <AppContext.Provider value={{ settings, updateSettings, dbReady }}>
@@ -58,6 +74,10 @@ function AppContextInner({ children }: { children: React.ReactNode }) {
       <SafetyNoticeModal
         visible={showSafetyNotice}
         onAcknowledge={() => acknowledgeSafetyNotice().catch(() => {})}
+      />
+      <VoiceIntroModal
+        visible={showVoiceIntro}
+        onAcknowledge={() => acknowledgeVoiceIntro().catch(() => {})}
       />
     </AppContext.Provider>
   );

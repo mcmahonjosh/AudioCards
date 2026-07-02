@@ -5,6 +5,7 @@ import {
   mapAnkiRevlog,
   mapAnkiRevlogRating,
 } from '../ankiSchedulingMapper';
+import { Sm2AlgorithmState } from '@/src/models/types';
 
 const CRT = 1_700_000_000;
 
@@ -77,7 +78,8 @@ describe('ankiSchedulingMapper', () => {
     );
     assert.equal(result.scheduling.phase, 'learning');
     if (result.scheduling.algorithm === 'sm2') {
-      assert.equal(result.scheduling.algorithmState.learningStepIndex, 1);
+      const state = result.scheduling.algorithmState as Sm2AlgorithmState;
+      assert.equal(state.learningStepIndex, 1);
     }
   });
 
@@ -102,8 +104,9 @@ describe('ankiSchedulingMapper', () => {
     );
     assert.equal(result.scheduling.phase, 'review');
     if (result.scheduling.algorithm === 'sm2') {
-      assert.equal(result.scheduling.algorithmState.intervalDays, 7);
-      assert.equal(result.scheduling.algorithmState.ease, 2.6);
+      const state = result.scheduling.algorithmState as Sm2AlgorithmState;
+      assert.equal(state.intervalDays, 7);
+      assert.equal(state.ease, 2.6);
     }
     assert.equal(
       result.scheduling.dueAt.getTime(),

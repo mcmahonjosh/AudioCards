@@ -1,0 +1,9 @@
+appId: com.joshuamcmahon.audiocards
+---
+- launchApp
+- tapOn: "Stats"
+- tapOn:
+    id: stats-filter-all
+- assertVisible: "Today"
+- tapOn: "E2E Test Deck"
+- assertVisible: "Today"

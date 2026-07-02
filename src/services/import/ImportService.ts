@@ -1,6 +1,8 @@
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { createCard, getDeckById } from '@/src/db/repositories';
+import { invalidateStatsData } from '@/src/context/statsInvalidation';
+import { invalidateDeck, invalidateAllDecks } from '@/src/context/deckInvalidation';
 import { parseCsvContent, ImportSummary, CsvRow } from './csvImporter';
 import { PastedCardRow } from './pastedTextImporter';
 import {
@@ -48,6 +50,8 @@ export async function importCsvRowsToDeck(
     }
   }
 
+  invalidateStatsData();
+  invalidateDeck(deckId);
   return { created, skipped, errors };
 }
 
@@ -96,6 +100,8 @@ export async function importPastedRowsToDeck(
     }
   }
 
+  invalidateStatsData();
+  invalidateDeck(deckId);
   return { created, skipped, errors };
 }
 
@@ -128,7 +134,10 @@ export async function importApkg(
   parseResult: ApkgParseResult,
   options: ApkgImportOptions,
 ): Promise<ImportSummary> {
-  return apkgImporter.importToDb(parseResult, options);
+  const result = await apkgImporter.importToDb(parseResult, options);
+  invalidateStatsData();
+  invalidateAllDecks();
+  return result;
 }
 
 export function formatImportSummary(result: ImportSummary): string {

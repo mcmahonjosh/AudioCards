@@ -8,6 +8,7 @@ import {
   formatCountAxisLabel,
   hourlyAxisLabels,
   niceMaxValue,
+  chartSeriesKey,
 } from './chartAxis';
 import { StatsChartFrame } from './StatsChartFrame';
 
@@ -27,41 +28,18 @@ export function HourlyChart({ data, width }: HourlyChartProps) {
     frontColor: StatsColors.volumeBar,
   }));
 
-  const lineData = data.map((p) => ({
-    value: p.passRate,
-  }));
-
   return (
     <StatsChartFrame
       yAxisLabel="Reviews"
-      secondaryYAxisLabel="Pass %"
       xAxisLabel="Hour of day"
-      legend={[
-        { color: StatsColors.volumeBar, label: 'Volume' },
-        { color: StatsColors.passArea, label: 'Pass rate' },
-      ]}
+      legend={[{ color: StatsColors.volumeBar, label: 'Volume' }]}
     >
       <View style={styles.container}>
         <BarChart
+          key={chartSeriesKey(data.map((p) => p.volume))}
           width={chartWidth}
           height={180}
           data={barData}
-          lineData={lineData}
-          showLine
-        lineConfig={{
-          color: StatsColors.passArea,
-          thickness: 2,
-          curved: true,
-          hideDataPoints: true,
-          isSecondary: true,
-        }}
-          secondaryYAxis={{
-            noOfSections: 4,
-            maxValue: 100,
-            roundToDigits: 0,
-            yAxisColor: StatsColors.passArea,
-            yAxisTextStyle: { color: StatsColors.passArea, fontSize: 9 },
-          }}
           barWidth={Math.max(6, chartWidth / 24 - 4)}
           spacing={2}
           roundedTop

@@ -1,0 +1,10 @@
+appId: com.joshuamcmahon.audiocards
+---
+# Optional smoke flow — requires a CSV file available to the device file picker.
+- launchApp
+- tapOn:
+    id: create-deck-button
+- tapOn:
+    id: deck-name-input
+- inputText: "CSV Import Deck"
+- tapOn: "Choose CSV File"

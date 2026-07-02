@@ -49,7 +49,7 @@ export function CardCountsPie({ data, size = 120 }: CardCountsPieProps) {
               const sweep = (slice.count / pieDenominator) * 360;
               const path = describeArc(cx, cy, r, angle, angle + sweep);
               angle += sweep;
-              return <Path key={slice.label} d={path} fill={slice.color} />;
+              return <Path key={`${slice.label}-${slice.count}`} d={path} fill={slice.color} />;
             })
           )}
         </G>

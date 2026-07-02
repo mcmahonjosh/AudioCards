@@ -1,0 +1,13 @@
+appId: com.joshuamcmahon.audiocards
+---
+- launchApp
+- tapOn: "E2E Test Deck"
+- tapOn:
+    id: deck-start-review-button
+- tapOn:
+    id: review-end-button
+- tapOn: "End"
+- assertVisible:
+    id: session-complete-title
+- tapOn:
+    id: review-done-button

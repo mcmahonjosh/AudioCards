@@ -75,6 +75,41 @@ Voice recognition works best on a **physical device** with a quiet environment.
 | Mic conflicts with TTS on iOS | App pauses recognition during speech automatically |
 | Empty review queue | Add cards or wait for due cards; new cards count toward daily limit |
 
+## Automated Tests
+
+### Unit and integration tests
+
+```bash
+npm test
+npm run test:watch
+npm run typecheck
+npm run lint
+```
+
+CI runs lint, typecheck, and the full Node test suite on every push/PR.
+
+### Maestro E2E (device / simulator)
+
+Prerequisites: dev client installed, Metro running (`npm start`), [Maestro CLI](https://maestro.mobile.dev/) installed.
+
+```bash
+maestro test .maestro/
+```
+
+Flows cover launch, deck creation, add card, touch review, end session, stats deck filter, and settings smoke. Voice/hands-free paths remain manual (see checklist below).
+
+## Manual QA Checklist (voice + platform)
+
+Run on a **physical iPhone** with a dev build after automated tests pass:
+
+- [ ] Safety notice + voice intro modals (first launch)
+- [ ] Hands-free: flip, good/hard/easy/again, pause/resume, end
+- [ ] TTS echo does not auto-rate (post-fix verification)
+- [ ] APKG import with media
+- [ ] Offline: airplane mode, review + stats still work
+- [ ] Session end stays on complete screen (regression)
+- [ ] Stats deck filter: numbers **and** bars match
+
 ## Production Build
 
 ```bash

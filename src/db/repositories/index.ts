@@ -404,6 +404,7 @@ export async function getAppSettings(): Promise<AppSettings> {
       ? clampNewCardsPerDay(parseInt(map.defaultNewCardsPerDay, 10))
       : defaults.defaultNewCardsPerDay,
     safetyNoticeAcknowledged: map.safetyNoticeAcknowledged === 'true',
+    voiceIntroAcknowledged: map.voiceIntroAcknowledged === 'true',
   };
 }
 

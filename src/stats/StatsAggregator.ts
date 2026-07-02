@@ -6,7 +6,11 @@ import {
   getReviewsToday,
   getLearnedCardCount,
   getTotalReviews,
+  getAllDecks,
+  type ReviewLogDetailedRow,
+  type SchedulingStatsRow,
 } from '@/src/db/repositories';
+import { Deck } from '@/src/models/types';
 import { localDateString, startOfDay } from '@/src/db/mappers';
 import {
   computeTodayStats,
@@ -195,3 +199,100 @@ export async function getAddedChart(
 }
 
 export { formatDurationMs } from './statsCompute';
+
+export interface StatsRawData {
+  logs: ReviewLogDetailedRow[];
+  schedulingRows: SchedulingStatsRow[];
+  decks: Deck[];
+  fetchedAt: number;
+}
+
+export interface StatsViewFilters {
+  deckId?: string;
+  futureDueRange: StatsRange;
+  futureDueBacklog: boolean;
+  calendarYear: number;
+  reviewsRange: StatsRange;
+  reviewsTimeMode: boolean;
+  separateSuspended: boolean;
+  intervalRange: IntervalRange;
+  hourlyRange: StatsRange;
+  answerRange: StatsRange;
+  addedRange: StatsRange;
+}
+
+export interface ComputedStats {
+  today: TodayStats;
+  futureDue: FutureDueChartData;
+  calendar: CalendarHeatmapData;
+  reviews: ReviewsChartData;
+  cardCounts: CardCountsData;
+  intervals: IntervalHistogramData;
+  ease: EaseHistogramData;
+  hourly: HourlyPoint[];
+  answerButtons: AnswerButtonGroupData[];
+  added: AddedChartData;
+}
+
+export function filterLogsForDeck(
+  logs: ReviewLogDetailedRow[],
+  deckId?: string,
+): ReviewLogDetailedRow[] {
+  if (!deckId) return logs;
+  return logs.filter((l) => l.deckId === deckId);
+}
+
+export function filterSchedulingForDeck(
+  rows: SchedulingStatsRow[],
+  deckId?: string,
+): SchedulingStatsRow[] {
+  if (!deckId) return rows;
+  return rows.filter((r) => r.deckId === deckId);
+}
+
+export async function fetchStatsRawData(): Promise<StatsRawData> {
+  const [logs, schedulingRows, decks] = await Promise.all([
+    getReviewLogsDetailedSince(null, new Date(0)),
+    getSchedulingStatsRows(),
+    getAllDecks(),
+  ]);
+
+  return {
+    logs,
+    schedulingRows,
+    decks,
+    fetchedAt: Date.now(),
+  };
+}
+
+export function computeStatsFromRaw(
+  raw: StatsRawData,
+  filters: StatsViewFilters,
+): ComputedStats {
+  const logs = filterLogsForDeck(raw.logs, filters.deckId);
+  const schedulingRows = filterSchedulingForDeck(raw.schedulingRows, filters.deckId);
+  const newCardsStudied = countNewCardsStudied(logs);
+
+  return {
+    today: computeTodayStats(logs),
+    futureDue: computeFutureDueChart(schedulingRows, {
+      range: filters.futureDueRange,
+      includeBacklog: filters.futureDueBacklog,
+    }),
+    calendar: computeCalendarHeatmap(logs, filters.calendarYear),
+    reviews: computeReviewsChart(logs, {
+      range: filters.reviewsRange,
+      mode: filters.reviewsTimeMode ? 'time' : 'count',
+    }),
+    cardCounts: computeCardCounts(
+      schedulingRows,
+      { separateSuspended: filters.separateSuspended },
+      newCardsStudied,
+    ),
+    intervals: computeIntervalHistogram(schedulingRows, filters.intervalRange),
+    ease: computeEaseHistogram(schedulingRows),
+    hourly: computeHourlyBreakdown(logs, filters.hourlyRange),
+    answerButtons: computeAnswerButtonGroups(logs, filters.answerRange),
+    added: computeAddedChart(logs, filters.addedRange),
+  };
+}

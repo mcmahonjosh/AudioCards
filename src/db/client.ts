@@ -1,77 +1,30 @@
-import { drizzle, ExpoSQLiteDatabase } from 'drizzle-orm/expo-sqlite';
-import { openDatabaseSync, SQLiteDatabase } from 'expo-sqlite';
+import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core';
 import * as schema from './schema';
-import { MIGRATION_SQL } from './migrations/0000_initial';
-import { MIGRATION_0001_SQL } from './migrations/0001_rich_content';
 
 export const DATABASE_NAME = 'audio_cards';
 
-export type AppDatabase = ExpoSQLiteDatabase<typeof schema>;
+export type AppDatabase = BaseSQLiteDatabase<'async' | 'sync', unknown, typeof schema>;
 
-let dbInstance: AppDatabase | null = null;
-let sqliteInstance: SQLiteDatabase | null = null;
+let nativeDb: AppDatabase | null = null;
+let testDbOverride: AppDatabase | null = null;
 
-const MIGRATIONS: { id: string; sql: string; alter?: { table: string; column: string; def: string }[] }[] = [
-  { id: '0000_initial', sql: MIGRATION_SQL },
-  {
-    id: '0001_rich_content',
-    sql: MIGRATION_0001_SQL,
-    alter: [{ table: 'cards', column: 'content_format', def: "TEXT NOT NULL DEFAULT 'plain'" }],
-  },
-];
+export function setNativeDb(db: AppDatabase | null): void {
+  nativeDb = db;
+}
 
-export function getSQLite(): SQLiteDatabase {
-  if (!sqliteInstance) {
-    sqliteInstance = openDatabaseSync(DATABASE_NAME);
-  }
-  return sqliteInstance;
+export function setDbForTests(db: AppDatabase | null): void {
+  testDbOverride = db;
 }
 
 export function getDb(): AppDatabase {
-  if (!dbInstance) {
-    dbInstance = drizzle(getSQLite(), { schema });
+  if (testDbOverride) return testDbOverride;
+  if (!nativeDb) {
+    throw new Error('Database not initialized');
   }
-  return dbInstance;
-}
-
-function columnExists(sqlite: SQLiteDatabase, table: string, column: string): boolean {
-  const cols = sqlite.getAllSync<{ name: string }>(`PRAGMA table_info(${table})`);
-  return cols.some((c) => c.name === column);
-}
-
-export function runMigrations(): void {
-  const sqlite = getSQLite();
-  sqlite.execSync(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      id TEXT PRIMARY KEY NOT NULL,
-      applied_at INTEGER NOT NULL
-    );
-  `);
-
-  for (const migration of MIGRATIONS) {
-    const applied = sqlite.getFirstSync<{ id: string }>(
-      'SELECT id FROM schema_migrations WHERE id = ?',
-      [migration.id],
-    );
-    if (applied) continue;
-
-    if (migration.alter) {
-      for (const { table, column, def } of migration.alter) {
-        if (!columnExists(sqlite, table, column)) {
-          sqlite.execSync(`ALTER TABLE ${table} ADD COLUMN ${column} ${def}`);
-        }
-      }
-    }
-
-    sqlite.execSync(migration.sql);
-    sqlite.runSync('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)', [
-      migration.id,
-      Date.now(),
-    ]);
-  }
+  return nativeDb;
 }
 
 export function resetDb(): void {
-  dbInstance = null;
-  sqliteInstance = null;
+  nativeDb = null;
+  testDbOverride = null;
 }

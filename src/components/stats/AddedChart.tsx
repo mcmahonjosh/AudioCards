@@ -10,6 +10,7 @@ import {
   niceMaxValue,
   PAST_DAY_BAR_SPACING,
   PAST_DAY_BAR_WIDTH,
+  chartSeriesKey,
 } from './chartAxis';
 import { StatsChartFrame } from './StatsChartFrame';
 import { useScrollToRecentDay } from './statsScrollChart';
@@ -26,7 +27,6 @@ export function AddedChart({ data, width }: AddedChartProps) {
   if (data.points.length === 0) return null;
 
   const maxCount = niceMaxValue(Math.max(...data.points.map((p) => p.count), 0));
-  const maxCumulative = niceMaxValue(Math.max(...data.points.map((p) => p.cumulative), 0));
   const labels = dayOffsetAxisLabels(data.points);
 
   const barData = data.points.map((p, i) => ({
@@ -35,43 +35,18 @@ export function AddedChart({ data, width }: AddedChartProps) {
     frontColor: StatsColors.added,
   }));
 
-  const lineData = data.points.map((p) => ({
-    value: p.cumulative,
-  }));
-
   return (
     <StatsChartFrame
       yAxisLabel="New / day"
-      secondaryYAxisLabel="Total studied"
       xAxisLabel="Days ago (0 = today · swipe right for older)"
-      legend={[
-        { color: StatsColors.added, label: 'New cards studied' },
-        { color: StatsColors.cumulative, label: 'Cumulative' },
-      ]}
+      legend={[{ color: StatsColors.added, label: 'New cards studied' }]}
     >
       <View style={styles.container}>
         <BarChart
+          key={chartSeriesKey(data.points.map((p) => p.count))}
           width={viewportWidth}
           height={180}
           data={barData}
-          lineData={lineData}
-          showLine
-          lineConfig={{
-            color: StatsColors.cumulative,
-            thickness: 2,
-            curved: false,
-            hideDataPoints: false,
-            dataPointsColor: StatsColors.cumulative,
-            dataPointsRadius: 2,
-            isSecondary: true,
-          }}
-          secondaryYAxis={{
-            noOfSections: 4,
-            maxValue: maxCumulative,
-            roundToDigits: 0,
-            yAxisColor: StatsColors.cumulative,
-            yAxisTextStyle: { color: StatsColors.cumulative, fontSize: 9 },
-          }}
           barWidth={PAST_DAY_BAR_WIDTH}
           spacing={PAST_DAY_BAR_SPACING}
           roundedTop

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Alert, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Alert, ScrollView, ActivityIndicator, InteractionManager } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Colors, Spacing, FontSize } from '@/constants/Colors';
 import { Button } from '@/src/components/Button';
@@ -17,13 +17,24 @@ import {
   useSpeechRecognitionEvent,
   voiceCommandService,
 } from '@/src/services/voice/VoiceCommandService';
+import { invalidateStatsData } from '@/src/context/statsInvalidation';
+import { invalidateDeck } from '@/src/context/deckInvalidation';
+import { useDeckCache } from '@/src/context/DeckCacheContext';
 
 const EMPTY_COUNTS: SessionCounts = { new: 0, learning: 0, review: 0 };
 
 export default function ReviewScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { settings } = useAppContext();
+  const { getReviewInitialSnapshot, refreshDeckData } = useDeckCache();
   const controllerRef = useRef<ReviewSessionController | null>(null);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const getSnapshotRef = useRef(getReviewInitialSnapshot);
+  getSnapshotRef.current = getReviewInitialSnapshot;
+  const refreshDeckRef = useRef(refreshDeckData);
+  refreshDeckRef.current = refreshDeckData;
+  const sessionCompleteRef = useRef(false);
 
   const [phase, setPhase] = useState<ReviewPhase>('loading');
   const [voiceActivity, setVoiceActivity] = useState<VoiceActivity>('idle');
@@ -47,39 +58,75 @@ export default function ReviewScreen() {
   useEffect(() => {
     if (!id) return;
 
-    const controller = new ReviewSessionController({
-      deckId: id,
-      includeNewCards: true,
-      defaultNewCardsPerDay: settings.defaultNewCardsPerDay,
-      speechRate: settings.speechRate,
-      speechVolume: settings.speechVolume,
-      autoPlayFront: settings.autoPlayFront,
-      autoPlayBack: settings.autoPlayBack,
-      handsFreeMode: settings.handsFreeMode,
-    });
+    let cancelled = false;
+    let unsub: (() => void) | null = null;
+    let controller: ReviewSessionController | null = null;
 
-    controllerRef.current = controller;
+    const task = InteractionManager.runAfterInteractions(() => {
+      void (async () => {
+        const s = settingsRef.current;
+        let initialSnapshot = getSnapshotRef.current(id) ?? undefined;
+        if (!initialSnapshot) {
+          const refreshed = await refreshDeckRef.current(id);
+          if (refreshed) {
+            initialSnapshot = {
+              deck: refreshed.deck,
+              cards: refreshed.cards,
+              newCardsIntroducedToday: refreshed.newCardsIntroducedToday,
+            };
+          }
+        }
+        if (cancelled) return;
 
-    const unsub = controller.onStateChange((state) => {
-      setPhase(state.phase);
-      setVoiceActivity(state.voiceActivity);
-      setSessionCounts(state.sessionCounts);
-      setCardsReviewed(state.cardsReviewed);
-      setIsFlipped(state.isFlipped);
-      setCurrentCard(state.currentCard);
-      setPreviews(state.previews);
-    });
+        controller = new ReviewSessionController({
+          deckId: id,
+          includeNewCards: true,
+          defaultNewCardsPerDay: s.defaultNewCardsPerDay,
+          speechRate: s.speechRate,
+          speechVolume: s.speechVolume,
+          autoPlayFront: s.autoPlayFront,
+          autoPlayBack: s.autoPlayBack,
+          handsFreeMode: s.handsFreeMode,
+          initialSnapshot,
+        });
 
-    controller.initialize().catch(() => {
-      Alert.alert('Error', 'Failed to start review session');
-      router.back();
+        controllerRef.current = controller;
+        sessionCompleteRef.current = false;
+
+        unsub = controller.onStateChange((state) => {
+          if (cancelled) return;
+          if (sessionCompleteRef.current && state.phase !== 'complete') return;
+          if (state.phase === 'complete') sessionCompleteRef.current = true;
+          setPhase(state.phase);
+          setVoiceActivity(state.voiceActivity);
+          setSessionCounts(state.sessionCounts);
+          setCardsReviewed(state.cardsReviewed);
+          setIsFlipped(state.isFlipped);
+          setCurrentCard(state.currentCard);
+          setPreviews(state.previews);
+        });
+
+        try {
+          await controller.initialize();
+        } catch {
+          if (!cancelled) {
+            Alert.alert('Error', 'Failed to start review session');
+            router.back();
+          }
+        }
+      })();
     });
 
     return () => {
-      unsub();
-      controller.destroy();
+      cancelled = true;
+      task.cancel();
+      unsub?.();
+      controller?.destroy();
+      controllerRef.current = null;
+      invalidateStatsData();
+      invalidateDeck(id);
     };
-  }, [id, settings]);
+  }, [id]);
 
   useEffect(() => {
     if (!currentCard) {
@@ -119,6 +166,7 @@ export default function ReviewScreen() {
   if (phase === 'loading') {
     return (
       <View style={styles.center}>
+        <ActivityIndicator size="large" color={Colors.primary} />
         <Text style={styles.loadingText}>Loading cards...</Text>
       </View>
     );
@@ -127,11 +175,11 @@ export default function ReviewScreen() {
   if (phase === 'complete') {
     return (
       <View style={styles.center}>
-        <Text style={styles.completeTitle}>Session Complete!</Text>
+        <Text style={styles.completeTitle} testID="session-complete-title">Session Complete!</Text>
         <Text style={styles.completeSubtitle}>
-          Reviewed {cardsReviewed} card{cardsReviewed === 1 ? '' : 's'} today
+          Reviewed {cardsReviewed} card{cardsReviewed === 1 ? '' : 's'}
         </Text>
-        <Button title="Done" onPress={() => router.back()} style={styles.doneBtn} />
+        <Button title="Done" testID="review-done-button" onPress={() => router.back()} style={styles.doneBtn} />
       </View>
     );
   }
@@ -196,7 +244,7 @@ export default function ReviewScreen() {
         )}
 
         {!isFlipped && phase !== 'paused' && (
-          <Button title="Flip" onPress={handleFlip} style={styles.flipBtn} />
+          <Button title="Flip" testID="review-flip-button" onPress={handleFlip} style={styles.flipBtn} />
         )}
 
         <RatingButtons
@@ -213,7 +261,7 @@ export default function ReviewScreen() {
         ) : (
           <Button title="Pause" variant="secondary" onPress={handlePause} style={styles.toolBtn} />
         )}
-        <Button title="End" variant="ghost" onPress={handleEnd} style={styles.toolBtn} />
+        <Button title="End" testID="review-end-button" variant="ghost" onPress={handleEnd} style={styles.toolBtn} />
       </View>
     </View>
   );

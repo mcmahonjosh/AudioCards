@@ -46,6 +46,7 @@ export function RatingButtons({ onRate, previews, visible, loading }: Props) {
         return (
           <TouchableOpacity
             key={rating}
+            testID={`rating-${rating}`}
             style={[styles.button, { backgroundColor: colors.bg }]}
             onPress={() => onRate(rating)}
             disabled={loading}

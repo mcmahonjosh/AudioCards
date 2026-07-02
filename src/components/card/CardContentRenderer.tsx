@@ -144,7 +144,7 @@ export function CardContentRenderer({
         tagsStyles={htmlTagStyles}
         customHTMLElementModels={customHTMLElementModels}
         renderers={htmlRenderers}
-        renderersProps={renderersProps}
+        renderersProps={renderersProps as React.ComponentProps<typeof RenderHTML>['renderersProps']}
         ignoredDomTags={ignoredDomTags}
         defaultTextProps={{ selectable: true }}
       />

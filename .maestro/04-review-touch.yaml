@@ -1,0 +1,10 @@
+appId: com.joshuamcmahon.audiocards
+---
+- launchApp
+- tapOn: "E2E Test Deck"
+- tapOn:
+    id: deck-start-review-button
+- tapOn:
+    id: review-flip-button
+- tapOn:
+    id: rating-good
