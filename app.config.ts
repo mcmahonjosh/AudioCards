@@ -21,9 +21,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
       NSSpeechRecognitionUsageDescription:
-        'Audio Cards uses speech recognition for hands-free voice commands during review.',
+        'Audio Cards uses speech recognition when Hands-Free Mode is on to understand review commands such as "flip", "repeat", "good", or "pause". Commands are processed on your device and are not saved or sent to us.',
       NSMicrophoneUsageDescription:
-        'Audio Cards uses the microphone for hands-free voice commands during review.',
+        'Audio Cards uses the microphone only when Hands-Free Mode is on during review. Say commands like "flip" to reveal the answer, "good" to rate a card, or "end" to finish. Audio is processed on-device and is not recorded or sent to our servers.',
       NSPhotoLibraryUsageDescription:
         'Audio Cards lets you import flashcard decks and media from files on your device. Photo library access is only used when you choose an image or deck file to import.',
     },
@@ -48,8 +48,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     [
       'expo-speech-recognition',
       {
-        microphonePermission: 'Allow Audio Cards to use the microphone for voice commands.',
-        speechRecognitionPermission: 'Allow Audio Cards to recognize voice commands.',
+        microphonePermission:
+          'Audio Cards uses the microphone only when Hands-Free Mode is on during review. Say commands like "flip" to reveal the answer, "good" to rate a card, or "end" to finish. Audio is processed on-device and is not recorded or sent to our servers.',
+        speechRecognitionPermission:
+          'Audio Cards uses speech recognition when Hands-Free Mode is on to understand review commands such as "flip", "repeat", "good", or "pause". Commands are processed on your device and are not saved or sent to us.',
       },
     ],
   ],
@@ -61,6 +63,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       projectId: '2405c646-aa9c-4406-a60d-bddbe14310d3',
     },
     privacyPolicyUrl: 'https://mcmahonjosh.github.io/AudioCards/privacy',
-    supportUrl: 'https://github.com/mcmahonjosh/AudioCards/issues',
+    supportUrl: 'https://mcmahonjosh.github.io/AudioCards/support',
   },
 });

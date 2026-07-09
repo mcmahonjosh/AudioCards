@@ -59,4 +59,4 @@ We may update this policy from time to time. The "Last updated" date at the top 
 
 ## Contact
 
-For privacy questions or support, open an issue on GitHub or use the Support link in the app Settings screen.
+For privacy questions or support, see the [Support page](support.md) or use the Support link in the app Settings screen.

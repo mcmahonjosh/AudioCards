@@ -66,7 +66,7 @@ Configure `ascAppId` in `eas.json` under `submit.production` after creating the 
 
 Privacy policy: [https://mcmahonjosh.github.io/AudioCards/privacy](https://mcmahonjosh.github.io/AudioCards/privacy)
 
-Support: [https://github.com/mcmahonjosh/AudioCards/issues](https://github.com/mcmahonjosh/AudioCards/issues)
+Support: [https://mcmahonjosh.github.io/AudioCards/support](https://mcmahonjosh.github.io/AudioCards/support)
 
 The in-app Settings screen uses the same URLs (configured in `app.config.ts`).
 
