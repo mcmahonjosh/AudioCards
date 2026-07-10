@@ -4,7 +4,7 @@ Hands-free flashcard review for language learning. Study offline with text-to-sp
 
 ## Contact
 
-**Email:** [jhm359@cornell.edu](mailto:jhm359@cornell.edu)
+**Email:** [mcmahon.h.josh@gmail.com](mailto:mcmahon.h.josh@gmail.com)
 
 **Bug reports and feature requests:** [GitHub Issues](https://github.com/mcmahonjosh/AudioCards/issues)
 
