@@ -45,13 +45,16 @@ interface LocaleButtonProps {
   locale: string;
   onPress: () => void;
   label?: string;
+  /** Optional voice name shown under the locale label. */
+  subtitle?: string;
 }
 
-export function LocaleButton({ locale, onPress, label }: LocaleButtonProps) {
+export function LocaleButton({ locale, onPress, label, subtitle }: LocaleButtonProps) {
   return (
     <TouchableOpacity style={styles.localeBtn} onPress={onPress}>
       <Text style={styles.localeBtnLabel}>{label ?? 'Language'}</Text>
       <Text style={styles.localeBtnValue}>{getLocaleLabel(locale)}</Text>
+      {subtitle ? <Text style={styles.localeBtnSubtitle}>Voice: {subtitle}</Text> : null}
     </TouchableOpacity>
   );
 }
@@ -122,5 +125,10 @@ const styles = StyleSheet.create({
     color: Colors.text,
     fontSize: FontSize.md,
     fontWeight: '500',
+  },
+  localeBtnSubtitle: {
+    color: Colors.textMuted,
+    fontSize: FontSize.sm,
+    marginTop: 4,
   },
 });

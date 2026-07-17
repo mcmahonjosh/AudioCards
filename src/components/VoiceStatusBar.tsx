@@ -24,7 +24,7 @@ export function VoiceStatusBar({ activity, handsFreeMode }: Props) {
       <View style={[styles.dot, { backgroundColor: color }]} />
       <Text style={[styles.text, { color }]}>{text}</Text>
       <Text style={styles.hint}>
-        Say: flip, repeat, again, hard, good, easy, pause, end
+        Say: flip, repeat, again, hard, good, easy, pause, end session
       </Text>
     </View>
   );

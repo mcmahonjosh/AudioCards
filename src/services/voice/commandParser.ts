@@ -53,18 +53,17 @@ export function parseVoiceCommand(transcript: string): VoiceCommand | null {
   }
 
   const words = normalized.split(/\s+/).filter(Boolean);
-  // Short utterances only — avoids rating from long TTS/card audio transcripts
-  if (words.length > 2) return null;
+  // Single-word commands only — avoids TTS echo like "Davido repeat" matching "repeat"
+  if (words.length !== 1) return null;
 
-  for (const word of words) {
-    for (const def of VOICE_COMMANDS) {
-      for (const alias of def.aliases) {
-        const normAlias = normalize(alias);
-        if (normAlias.includes(' ')) continue;
-        if (word === normAlias) return def.command;
-        const dist = levenshtein(word, normAlias);
-        if (dist <= 1 && word.length >= 3) return def.command;
-      }
+  const word = words[0];
+  for (const def of VOICE_COMMANDS) {
+    for (const alias of def.aliases) {
+      const normAlias = normalize(alias);
+      if (normAlias.includes(' ')) continue;
+      if (word === normAlias) return def.command;
+      const dist = levenshtein(word, normAlias);
+      if (dist <= 1 && word.length >= 3) return def.command;
     }
   }
 

@@ -1,6 +1,7 @@
 import { getMediaByCardId } from '@/src/db/repositories';
 import { CardMedia, ContentFormat } from '@/src/models/types';
 import { ttsService } from '@/src/services/tts/TtsService';
+import { configureLoudSpeakerAudio } from '@/src/services/audio/audioSession';
 import {
   extractSoundFilenames,
   stripHtmlForTts,
@@ -10,6 +11,7 @@ import {
 export interface PlaySideOptions {
   rate?: number;
   volume?: number;
+  voiceOverride?: string;
   side?: 'front' | 'back';
   frontText?: string;
 }
@@ -74,11 +76,13 @@ class CardMediaServiceImpl {
     try {
       await av.setAudioModeAsync({
         playsInSilentModeIOS: true,
-        allowsRecordingIOS: false,
+        allowsRecordingIOS: true,
       });
       await this.playFile(av, item.localUri);
     } catch {
       // ignore playback errors
+    } finally {
+      configureLoudSpeakerAudio();
     }
   }
 
@@ -104,13 +108,15 @@ class CardMediaServiceImpl {
       try {
         await av.setAudioModeAsync({
           playsInSilentModeIOS: true,
-          allowsRecordingIOS: false,
+          allowsRecordingIOS: true,
         });
         for (const uri of sounds) {
           await this.playFile(av, uri);
         }
+        configureLoudSpeakerAudio();
         return;
       } catch {
+        configureLoudSpeakerAudio();
         // fall through to TTS
       }
     }
@@ -121,6 +127,7 @@ class CardMediaServiceImpl {
     await ttsService.speak(plain, locale, {
       rate: options.rate,
       volume: options.volume ?? 60,
+      voiceOverride: options.voiceOverride,
     });
   }
 
@@ -148,7 +155,9 @@ class CardMediaServiceImpl {
       sound.setOnPlaybackStatusUpdate((status) => {
         if (!status.isLoaded) return;
         if (status.didJustFinish) {
-          sound.unloadAsync().then(() => resolve()).catch(reject);
+          // Unblock review/listening immediately; unload in the background.
+          resolve();
+          void sound.unloadAsync().catch(() => {});
         }
       });
       sound.playAsync().catch(reject);

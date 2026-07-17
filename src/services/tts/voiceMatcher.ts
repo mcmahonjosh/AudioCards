@@ -154,6 +154,10 @@ function scoreVoiceForSelection(
   voices: VoiceInfo[],
 ): number {
   let score = scoreVoice(voice, locale);
+  // No same-language family — do not apply quality bonuses that would
+  // incorrectly select an unrelated voice (e.g. English for Japanese).
+  if (score <= 0) return 0;
+
   const id = voice.identifier.toLowerCase();
   if (id.includes('com.apple.voice.enhanced.')) score += 10;
 
@@ -193,7 +197,8 @@ export function resolveBestVoice(
 
   if (ranked.length > 0) return ranked[0].voice;
 
-  return voices[0];
+  // No same-language match — omit voice and let the OS pick for `language`.
+  return null;
 }
 
 export function getVoicesForExactLocale(
@@ -340,4 +345,102 @@ export function findVoiceById(
 ): VoiceInfo | null {
   if (!voiceId) return null;
   return voices.find((v) => v.identifier === voiceId) ?? null;
+}
+
+export type VoiceQualityBadge = 'Enhanced' | 'Compact' | 'Standard';
+
+export function getVoiceQualityBadge(voice: VoiceInfo): VoiceQualityBadge {
+  if (isCompactVoice(voice) && !isEnhancedVoice(voice)) return 'Compact';
+  if (isEnhancedVoice(voice)) return 'Enhanced';
+  return 'Standard';
+}
+
+export interface LanguageOption {
+  code: string;
+  label: string;
+}
+
+export interface RegionOption {
+  code: string;
+  locale: string;
+  label: string;
+}
+
+/** Unique languages present on the device, sorted by label. */
+export function listLanguagesFromVoices(voices: VoiceInfo[]): LanguageOption[] {
+  const byLang = new Map<string, string>();
+  for (const voice of voices) {
+    const locale = resolveVoiceLocale(voice);
+    const lang = languagePrefix(locale);
+    if (!lang || byLang.has(lang)) continue;
+    byLang.set(lang, getLocaleLabel(lang));
+  }
+  return [...byLang.entries()]
+    .map(([code, label]) => ({ code, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/** Regions for a language code, derived from installed voices. */
+export function listRegionsForLanguage(
+  voices: VoiceInfo[],
+  languageCode: string,
+): RegionOption[] {
+  const lang = languageCode.toLowerCase();
+  const byLocale = new Map<string, RegionOption>();
+
+  for (const voice of voices) {
+    const locale = resolveVoiceLocale(voice);
+    if (languagePrefix(locale) !== lang) continue;
+    const key = locale.toLowerCase();
+    if (byLocale.has(key)) continue;
+    const canon = canonicalLocale(locale);
+    const parts = normalizeLocale(canon).split('-');
+    const region = parts[1] ?? '';
+    const fullLabel = getLocaleLabel(canon);
+    const paren = fullLabel.match(/\((.+)\)\s*$/);
+    byLocale.set(key, {
+      code: region || canon,
+      locale: canon,
+      label: paren ? paren[1] : fullLabel,
+    });
+  }
+
+  // Prefer curated order when available.
+  const curated = CURATED_LOCALES.filter(
+    (l) => languagePrefix(l.code) === lang && byLocale.has(l.code.toLowerCase()),
+  );
+  const rest = [...byLocale.values()].filter(
+    (r) => !curated.some((c) => c.code.toLowerCase() === r.locale.toLowerCase()),
+  );
+  rest.sort((a, b) => a.label.localeCompare(b.label));
+
+  return [
+    ...curated.map((c) => byLocale.get(c.code.toLowerCase())!),
+    ...rest,
+  ];
+}
+
+/** Split a locale into language + region codes for picker state. */
+export function splitLocale(locale: string): { language: string; region: string; locale: string } {
+  const canon = canonicalLocale(locale);
+  const parts = normalizeLocale(canon).split('-');
+  return {
+    language: parts[0]?.toLowerCase() ?? 'en',
+    region: parts[1] ?? '',
+    locale: canon,
+  };
+}
+
+/**
+ * Resolve the voice to show as selected: saved ID if still installed,
+ * otherwise the best match for the locale.
+ */
+export function resolveSelectedVoice(
+  voices: VoiceInfo[],
+  locale: string,
+  voiceId?: string | null,
+): VoiceInfo | null {
+  const saved = findVoiceById(voices, voiceId);
+  if (saved) return saved;
+  return resolveBestVoice(voices, locale);
 }

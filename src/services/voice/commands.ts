@@ -23,7 +23,7 @@ export const VOICE_COMMANDS: CommandDefinition[] = [
   { command: 'easy', aliases: ['easy', 'simple', 'trivial', 'know it'] },
   { command: 'pause', aliases: ['pause', 'stop', 'hold', 'wait'] },
   { command: 'resume', aliases: ['resume', 'continue', 'go', 'start'] },
-  { command: 'end', aliases: ['end', 'end session', 'quit', 'exit', 'done', 'finish'] },
+  { command: 'end', aliases: ['end session'] },
 ];
 
 export const CONTEXTUAL_STRINGS = VOICE_COMMANDS.flatMap((c) => c.aliases);

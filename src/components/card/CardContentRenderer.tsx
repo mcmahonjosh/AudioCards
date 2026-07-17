@@ -96,6 +96,8 @@ export function CardContentRenderer({
 }: Props) {
   const { width } = useWindowDimensions();
   const contentWidth = width - Spacing.lg * 4;
+  const onPlaySoundRef = React.useRef(onPlaySound);
+  onPlaySoundRef.current = onPlaySound;
 
   const mediaBySource = useMemo(() => {
     const map: Record<string, string> = {};
@@ -111,12 +113,19 @@ export function CardContentRenderer({
     [text],
   );
 
+  const stableOnPlaySound = useMemo(
+    () => (filename: string) => {
+      onPlaySoundRef.current?.(filename);
+    },
+    [],
+  );
+
   const renderersProps = useMemo(
     () => ({
-      'anki-sound': { onPlaySound },
+      'anki-sound': { onPlaySound: stableOnPlaySound },
       img: { mediaBySource },
     }),
-    [mediaBySource, onPlaySound],
+    [mediaBySource, stableOnPlaySound],
   );
 
   if (contentFormat === 'plain') {

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Alert, ScrollView, ActivityIndicator, InteractionManager } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Colors, Spacing, FontSize } from '@/constants/Colors';
@@ -48,10 +48,42 @@ export default function ReviewScreen() {
   useSpeechRecognitionEvent('result', (event) => {
     const transcript = event.results[0]?.transcript ?? '';
     const isFinal = event.isFinal ?? false;
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      console.log('[VOICE] result', {
+        transcript,
+        isFinal,
+        confidence: event.results[0]?.confidence,
+      });
+    }
     voiceCommandService.handleResult(transcript, isFinal);
   });
 
+  useSpeechRecognitionEvent('start', () => {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[VOICE] recognizer started');
+  });
+
+  useSpeechRecognitionEvent('audiostart', () => {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[VOICE] microphone ready');
+  });
+
+  useSpeechRecognitionEvent('speechstart', () => {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[VOICE] speech detected');
+  });
+
+  useSpeechRecognitionEvent('nomatch', () => {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[VOICE] no match');
+  });
+
+  useSpeechRecognitionEvent('error', (event) => {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      console.warn('[VOICE] recognition error', event);
+    }
+  });
+
   useSpeechRecognitionEvent('end', () => {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      console.log('[VOICE] recognizer ended; scheduling restart');
+    }
     voiceCommandService.handleEnd();
   });
 
@@ -160,6 +192,11 @@ export default function ReviewScreen() {
     }
   };
 
+  const handlePlaySound = useCallback(async (filename: string) => {
+    if (!currentCard) return;
+    await cardMediaService.playMediaByFilename(currentCard.id, filename);
+  }, [currentCard?.id]);
+
   const totalInQueue =
     sessionCounts.new + sessionCounts.learning + sessionCounts.review;
 
@@ -195,11 +232,6 @@ export default function ReviewScreen() {
       : currentCard.frontLocale
     : '';
   const displayFormat = currentCard?.contentFormat ?? 'plain';
-
-  const handlePlaySound = async (filename: string) => {
-    if (!currentCard) return;
-    await cardMediaService.playMediaByFilename(currentCard.id, filename);
-  };
 
   return (
     <View style={styles.container}>

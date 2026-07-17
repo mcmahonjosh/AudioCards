@@ -90,6 +90,10 @@ export interface ApkgImportOptions {
   selectedDeckIds: string[];
   frontLocale?: string;
   backLocale?: string;
+  frontVoiceId?: string | null;
+  backVoiceId?: string | null;
+  /** When set, append all selected Anki cards into this existing deck. */
+  targetDeckId?: string;
   onProgress?: (progress: { current: number; total: number; phase: string }) => void;
 }
 
@@ -435,18 +439,30 @@ class ApkgImporterImpl implements ApkgImporter {
     const deckIdMap = new Map<string, string>();
     const ankiDeckNames = new Map(result.decks.map((d) => [d.id, d.name]));
 
-    for (const ankiDeckId of selected) {
-      const name = ankiDeckNames.get(ankiDeckId) ?? `Anki Deck ${ankiDeckId}`;
-      let deck = await findDeckByName(name);
-      if (!deck) {
-        deck = await createDeck({
-          name,
-          frontLocale: options.frontLocale ?? 'en-US',
-          backLocale: options.backLocale ?? 'es-MX',
-        });
-        decksCreated++;
+    if (options.targetDeckId) {
+      const target = await getDeckById(options.targetDeckId);
+      if (!target) {
+        throw new Error('Target deck not found');
       }
-      deckIdMap.set(ankiDeckId, deck.id);
+      for (const ankiDeckId of selected) {
+        deckIdMap.set(ankiDeckId, target.id);
+      }
+    } else {
+      for (const ankiDeckId of selected) {
+        const name = ankiDeckNames.get(ankiDeckId) ?? `Anki Deck ${ankiDeckId}`;
+        let deck = await findDeckByName(name);
+        if (!deck) {
+          deck = await createDeck({
+            name,
+            frontLocale: options.frontLocale ?? 'en-US',
+            backLocale: options.backLocale ?? 'es-MX',
+            frontVoiceId: options.frontVoiceId ?? null,
+            backVoiceId: options.backVoiceId ?? null,
+          });
+          decksCreated++;
+        }
+        deckIdMap.set(ankiDeckId, deck.id);
+      }
     }
 
     const cardIdByAnkiCard = new Map<string, string>();
@@ -494,6 +510,8 @@ class ApkgImporterImpl implements ApkgImporter {
           backText: back,
           frontLocale: deck.frontLocale,
           backLocale: deck.backLocale,
+          frontVoiceId: deck.frontVoiceId,
+          backVoiceId: deck.backVoiceId,
           tags: note.tags,
           contentFormat: 'html',
           suspended: note.scheduling?.suspended,
@@ -504,8 +522,12 @@ class ApkgImporterImpl implements ApkgImporter {
         cardIdByAnkiCard.set(note.ankiCardId, card.id);
         mediaFiles += note.media.length;
         created++;
-      } catch {
+      } catch (e) {
         skipped++;
+        if (errors.length < 5) {
+          const msg = e instanceof Error ? e.message : String(e);
+          errors.push(`Card ${note.ankiCardId}: ${msg}`);
+        }
       }
     }
 

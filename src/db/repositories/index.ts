@@ -49,6 +49,8 @@ export async function createDeck(input: {
   name: string;
   frontLocale: string;
   backLocale: string;
+  frontVoiceId?: string | null;
+  backVoiceId?: string | null;
 }): Promise<Deck> {
   const now = Date.now();
   const id = generateId();
@@ -58,6 +60,8 @@ export async function createDeck(input: {
     name: input.name,
     frontLocale: input.frontLocale,
     backLocale: input.backLocale,
+    frontVoiceId: input.frontVoiceId ?? null,
+    backVoiceId: input.backVoiceId ?? null,
     algorithm: 'sm2' as const,
     configJson: serializeDeckConfig(config),
     createdAt: now,
@@ -69,16 +73,62 @@ export async function createDeck(input: {
 
 export async function updateDeck(
   id: string,
-  input: Partial<{ name: string; frontLocale: string; backLocale: string; config: Sm2DeckConfig }>,
+  input: Partial<{
+    name: string;
+    frontLocale: string;
+    backLocale: string;
+    frontVoiceId: string | null;
+    backVoiceId: string | null;
+    config: Sm2DeckConfig;
+  }>,
 ): Promise<void> {
   const update: Record<string, unknown> = { updatedAt: Date.now() };
   if (input.name !== undefined) update.name = input.name;
   if (input.frontLocale !== undefined) update.frontLocale = input.frontLocale;
   if (input.backLocale !== undefined) update.backLocale = input.backLocale;
+  if (input.frontVoiceId !== undefined) update.frontVoiceId = input.frontVoiceId;
+  if (input.backVoiceId !== undefined) update.backVoiceId = input.backVoiceId;
   if (input.config !== undefined) {
     update.configJson = serializeDeckConfig(input.config);
   }
   await getDb().update(decks).set(update).where(eq(decks.id, id));
+}
+
+/**
+ * Update deck front/back locale + voice defaults and apply the same
+ * values to every existing card in the deck.
+ */
+export async function updateDeckLocalesAndVoices(
+  deckId: string,
+  input: {
+    frontLocale: string;
+    backLocale: string;
+    frontVoiceId: string | null;
+    backVoiceId: string | null;
+  },
+): Promise<void> {
+  const now = Date.now();
+  await getDb()
+    .update(decks)
+    .set({
+      frontLocale: input.frontLocale,
+      backLocale: input.backLocale,
+      frontVoiceId: input.frontVoiceId,
+      backVoiceId: input.backVoiceId,
+      updatedAt: now,
+    })
+    .where(eq(decks.id, deckId));
+
+  await getDb()
+    .update(cards)
+    .set({
+      frontLocale: input.frontLocale,
+      backLocale: input.backLocale,
+      frontVoiceId: input.frontVoiceId,
+      backVoiceId: input.backVoiceId,
+      updatedAt: now,
+    })
+    .where(eq(cards.deckId, deckId));
 }
 
 export async function updateDeckConfig(
@@ -112,6 +162,8 @@ export async function createCard(input: {
   backText: string;
   frontLocale: string;
   backLocale: string;
+  frontVoiceId?: string | null;
+  backVoiceId?: string | null;
   tags?: string;
   contentFormat?: ContentFormat;
   suspended?: boolean;
@@ -130,6 +182,8 @@ export async function createCard(input: {
     backText: input.backText,
     frontLocale: input.frontLocale,
     backLocale: input.backLocale,
+    frontVoiceId: input.frontVoiceId ?? deck.frontVoiceId ?? null,
+    backVoiceId: input.backVoiceId ?? deck.backVoiceId ?? null,
     tags: input.tags ?? null,
     contentFormat: input.contentFormat ?? 'plain',
     suspended: input.suspended ? 1 : 0,
@@ -166,6 +220,8 @@ export async function updateCard(
     backText: string;
     frontLocale: string;
     backLocale: string;
+    frontVoiceId: string | null;
+    backVoiceId: string | null;
     tags: string;
     contentFormat: ContentFormat;
     suspended: boolean;
@@ -176,6 +232,8 @@ export async function updateCard(
   if (input.backText !== undefined) update.backText = input.backText;
   if (input.frontLocale !== undefined) update.frontLocale = input.frontLocale;
   if (input.backLocale !== undefined) update.backLocale = input.backLocale;
+  if (input.frontVoiceId !== undefined) update.frontVoiceId = input.frontVoiceId;
+  if (input.backVoiceId !== undefined) update.backVoiceId = input.backVoiceId;
   if (input.tags !== undefined) update.tags = input.tags;
   if (input.contentFormat !== undefined) update.contentFormat = input.contentFormat;
   if (input.suspended !== undefined) update.suspended = input.suspended ? 1 : 0;
@@ -372,14 +430,26 @@ export async function getNewCardsIntroducedToday(deckId: string): Promise<number
   return rows[0]?.newCardsIntroduced ?? 0;
 }
 
+/**
+ * Count of old cards "finished for today": review/relearning-phase cards whose
+ * rating today scheduled them past end of day (1+ days out). Intra-day learning
+ * steps and new-card introductions are not counted as reviews.
+ */
 export async function getReviewsToday(deckId?: string): Promise<number> {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
-  const conditions = [gte(reviewLogs.reviewedAt, start.getTime())];
+  const endOfDay = new Date();
+  endOfDay.setHours(23, 59, 59, 999);
+
+  const conditions = [
+    gte(reviewLogs.reviewedAt, start.getTime()),
+    sql`${reviewLogs.phaseBefore} IN ('review', 'relearning')`,
+    sql`${reviewLogs.dueAtAfter} > ${endOfDay.getTime()}`,
+  ];
   if (deckId) conditions.push(eq(reviewLogs.deckId, deckId));
 
   const rows = await getDb()
-    .select({ count: sql<number>`count(*)` })
+    .select({ count: sql<number>`count(distinct ${reviewLogs.cardId})` })
     .from(reviewLogs)
     .where(and(...conditions));
   return rows[0]?.count ?? 0;
@@ -400,6 +470,12 @@ export async function getAppSettings(): Promise<AppSettings> {
     handsFreeMode: map.handsFreeMode ? map.handsFreeMode === 'true' : defaults.handsFreeMode,
     defaultFrontLocale: map.defaultFrontLocale ?? defaults.defaultFrontLocale,
     defaultBackLocale: map.defaultBackLocale ?? defaults.defaultBackLocale,
+    defaultFrontVoiceId: map.defaultFrontVoiceId
+      ? map.defaultFrontVoiceId
+      : defaults.defaultFrontVoiceId,
+    defaultBackVoiceId: map.defaultBackVoiceId
+      ? map.defaultBackVoiceId
+      : defaults.defaultBackVoiceId,
     defaultNewCardsPerDay: map.defaultNewCardsPerDay
       ? clampNewCardsPerDay(parseInt(map.defaultNewCardsPerDay, 10))
       : defaults.defaultNewCardsPerDay,
@@ -416,6 +492,8 @@ function clampNewCardsPerDay(value: number): number {
 export async function saveAppSettings(settings: Partial<AppSettings>): Promise<void> {
   const entries = Object.entries(settings) as [keyof AppSettings, unknown][];
   for (const [key, value] of entries) {
+    const stored =
+      value === null || value === undefined ? '' : String(value);
     const existing = await getDb()
       .select()
       .from(appSettings)
@@ -425,10 +503,10 @@ export async function saveAppSettings(settings: Partial<AppSettings>): Promise<v
     if (existing[0]) {
       await getDb()
         .update(appSettings)
-        .set({ value: String(value) })
+        .set({ value: stored })
         .where(eq(appSettings.key, key));
     } else {
-      await getDb().insert(appSettings).values({ key, value: String(value) });
+      await getDb().insert(appSettings).values({ key, value: stored });
     }
   }
 }

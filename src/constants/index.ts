@@ -27,6 +27,8 @@ export const DEFAULT_SETTINGS = {
   handsFreeMode: true,
   defaultFrontLocale: 'en-US',
   defaultBackLocale: 'es-MX',
+  defaultFrontVoiceId: null as string | null,
+  defaultBackVoiceId: null as string | null,
   defaultNewCardsPerDay: 20,
   safetyNoticeAcknowledged: false,
   voiceIntroAcknowledged: false,

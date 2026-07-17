@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -25,11 +25,12 @@ import { invalidateAllDecks } from '@/src/context/deckInvalidation';
 import {
   importCsvToDeck,
   importPastedRowsToDeck,
-  pickApkgFile,
   pickCsvFile,
   previewCsvFile,
 } from '@/src/services/import/ImportService';
 import { useAppContext } from '@/src/context/AppContext';
+import { ttsService } from '@/src/services/tts/TtsService';
+import { findVoiceById } from '@/src/services/tts/voiceMatcher';
 
 type CardSource = 'paste' | 'csv' | 'none';
 
@@ -38,8 +39,24 @@ export default function NewDeckScreen() {
   const [name, setName] = useState('');
   const [frontLocale, setFrontLocale] = useState(settings.defaultFrontLocale);
   const [backLocale, setBackLocale] = useState(settings.defaultBackLocale);
+  const [frontVoiceId, setFrontVoiceId] = useState<string | null>(
+    settings.defaultFrontVoiceId,
+  );
+  const [backVoiceId, setBackVoiceId] = useState<string | null>(
+    settings.defaultBackVoiceId,
+  );
+  const [frontVoiceName, setFrontVoiceName] = useState('');
+  const [backVoiceName, setBackVoiceName] = useState('');
   const [picker, setPicker] = useState<'front' | 'back' | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    ttsService.initialize().then(() => {
+      const voices = ttsService.getVoices();
+      setFrontVoiceName(findVoiceById(voices, frontVoiceId)?.name ?? '');
+      setBackVoiceName(findVoiceById(voices, backVoiceId)?.name ?? '');
+    });
+  }, [frontVoiceId, backVoiceId]);
   const [pasteState, setPasteState] = useState<PasteCardsState | null>(null);
   const [cardSource, setCardSource] = useState<CardSource>('none');
   const [csvFileUri, setCsvFileUri] = useState<string | null>(null);
@@ -83,10 +100,8 @@ export default function NewDeckScreen() {
     }
   };
 
-  const handleImportApkg = async () => {
-    const fileUri = await pickApkgFile();
-    if (!fileUri) return;
-    router.push({ pathname: '/import/apkg', params: { fileUri } });
+  const handleImportApkg = () => {
+    router.push('/import/apkg');
   };
 
   const handleCreate = async () => {
@@ -116,7 +131,13 @@ export default function NewDeckScreen() {
 
     setLoading(true);
     try {
-      const deck = await createDeck({ name: name.trim(), frontLocale, backLocale });
+      const deck = await createDeck({
+        name: name.trim(),
+        frontLocale,
+        backLocale,
+        frontVoiceId,
+        backVoiceId,
+      });
       invalidateStatsData();
       invalidateAllDecks();
 
@@ -176,11 +197,23 @@ export default function NewDeckScreen() {
           autoFocus
         />
 
-        <Text style={styles.section}>Card Languages</Text>
-        <Text style={styles.hint}>Front and back language defaults for new cards in this deck.</Text>
+        <Text style={styles.section}>Card Voices</Text>
+        <Text style={styles.hint}>
+          Front and back language + voice defaults for new cards in this deck.
+        </Text>
 
-        <LocaleButton locale={frontLocale} label="Front Language" onPress={() => setPicker('front')} />
-        <LocaleButton locale={backLocale} label="Back Language" onPress={() => setPicker('back')} />
+        <LocaleButton
+          locale={frontLocale}
+          label="Front Voice"
+          subtitle={frontVoiceName || undefined}
+          onPress={() => setPicker('front')}
+        />
+        <LocaleButton
+          locale={backLocale}
+          label="Back Voice"
+          subtitle={backVoiceName || undefined}
+          onPress={() => setPicker('back')}
+        />
 
         <Text style={[styles.section, styles.cardsSection]}>Add cards (optional)</Text>
         <Text style={styles.hint}>
@@ -220,16 +253,24 @@ export default function NewDeckScreen() {
       <VoicePicker
         visible={picker === 'front'}
         selectedLocale={frontLocale}
-        onSelect={setFrontLocale}
+        selectedVoiceId={frontVoiceId}
+        onSelect={({ locale, voiceId }) => {
+          setFrontLocale(locale);
+          setFrontVoiceId(voiceId);
+        }}
         onClose={() => setPicker(null)}
-        title="Front Language"
+        title="Front Voice"
       />
       <VoicePicker
         visible={picker === 'back'}
         selectedLocale={backLocale}
-        onSelect={setBackLocale}
+        selectedVoiceId={backVoiceId}
+        onSelect={({ locale, voiceId }) => {
+          setBackLocale(locale);
+          setBackVoiceId(voiceId);
+        }}
         onClose={() => setPicker(null)}
-        title="Back Language"
+        title="Back Voice"
       />
     </KeyboardAvoidingView>
   );

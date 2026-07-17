@@ -18,10 +18,12 @@ import {
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Colors, Spacing, FontSize } from '@/constants/Colors';
 import { Button } from '@/src/components/Button';
-import { updateDeck, deleteDeck } from '@/src/db/repositories';
-import { pickAndImportCsv, pickApkgFile, importPastedRowsToDeck } from '@/src/services/import/ImportService';
+import { LocaleButton } from '@/src/components/LocalePicker';
+import { VoicePicker } from '@/src/components/VoicePicker';
+import { updateDeck, updateDeckLocalesAndVoices, deleteDeck } from '@/src/db/repositories';
+import { pickAndImportCsv, importPastedRowsToDeck } from '@/src/services/import/ImportService';
 import { invalidateStatsData } from '@/src/context/statsInvalidation';
-import { invalidateAllDecks, useDeckCache } from '@/src/context/DeckCacheContext';
+import { invalidateAllDecks, invalidateDeck, useDeckCache } from '@/src/context/DeckCacheContext';
 import {
   PasteCardsPanel,
   PasteCardsState,
@@ -30,7 +32,11 @@ import { CardWithScheduling } from '@/src/models/types';
 import { getLocaleLabel } from '@/src/services/tts/locales';
 import { formatDueAt } from '@/src/scheduler/time';
 import { ttsService } from '@/src/services/tts/TtsService';
-import { describeVoice } from '@/src/services/tts/voiceMatcher';
+import {
+  describeVoice,
+  findVoiceById,
+  resolveSelectedVoice,
+} from '@/src/services/tts/voiceMatcher';
 import {
   clampNewCardsPerDay,
   getDeckNewCardsPerDayMode,
@@ -42,6 +48,7 @@ import { useAppContext } from '@/src/context/AppContext';
 import { NumberStepper } from '@/src/components/NumberStepper';
 import { Sm2DeckConfig } from '@/src/models/types';
 import { normalizeSm2DeckConfig } from '@/src/db/mappers';
+import { firstParam } from '@/src/utils/routeParams';
 
 function cardDueLabel(scheduling: CardWithScheduling['scheduling']): string {
   const now = new Date();
@@ -51,7 +58,8 @@ function cardDueLabel(scheduling: CardWithScheduling['scheduling']): string {
 }
 
 export default function DeckScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const params = useLocalSearchParams<{ id: string }>();
+  const id = firstParam(params.id);
   const { settings } = useAppContext();
   const {
     getDeckSnapshot,
@@ -78,6 +86,16 @@ export default function DeckScreen() {
   const [schedulerCustomLimit, setSchedulerCustomLimit] = useState(20);
   const [frontVoiceLabel, setFrontVoiceLabel] = useState('');
   const [backVoiceLabel, setBackVoiceLabel] = useState('');
+  const [voicesModal, setVoicesModal] = useState(false);
+  const [editFrontLocale, setEditFrontLocale] = useState('en-US');
+  const [editBackLocale, setEditBackLocale] = useState('es-MX');
+  const [editFrontVoiceId, setEditFrontVoiceId] = useState<string | null>(null);
+  const [editBackVoiceId, setEditBackVoiceId] = useState<string | null>(null);
+  const [editFrontVoiceName, setEditFrontVoiceName] = useState('');
+  const [editBackVoiceName, setEditBackVoiceName] = useState('');
+  const [voiceSidePicker, setVoiceSidePicker] = useState<'front' | 'back' | null>(null);
+  const [pendingVoiceSide, setPendingVoiceSide] = useState<'front' | 'back' | null>(null);
+  const [savingVoices, setSavingVoices] = useState(false);
 
   const reloadDeck = useCallback(() => {
     if (!id) return Promise.resolve(null);
@@ -106,13 +124,22 @@ export default function DeckScreen() {
 
     const task = InteractionManager.runAfterInteractions(() => {
       ttsService.initialize().then(() => {
-        setFrontVoiceLabel(describeVoice(ttsService.resolveVoice(deck.frontLocale)));
-        setBackVoiceLabel(describeVoice(ttsService.resolveVoice(deck.backLocale)));
+        const voices = ttsService.getVoices();
+        setFrontVoiceLabel(
+          describeVoice(
+            resolveSelectedVoice(voices, deck.frontLocale, deck.frontVoiceId),
+          ),
+        );
+        setBackVoiceLabel(
+          describeVoice(
+            resolveSelectedVoice(voices, deck.backLocale, deck.backVoiceId),
+          ),
+        );
       });
     });
 
     return () => task.cancel();
-  }, [deck?.id, deck?.frontLocale, deck?.backLocale]);
+  }, [deck?.id, deck?.frontLocale, deck?.backLocale, deck?.frontVoiceId, deck?.backVoiceId]);
 
   const handleImportCsv = async () => {
     if (!id) return;
@@ -128,10 +155,9 @@ export default function DeckScreen() {
   };
 
   const handleImportApkg = async () => {
+    if (!id) return;
     setImportModal(false);
-    const fileUri = await pickApkgFile();
-    if (!fileUri) return;
-    router.push({ pathname: '/import/apkg', params: { fileUri } });
+    router.push({ pathname: '/import/apkg', params: { targetDeckId: id } });
   };
 
   const handlePasteChange = useCallback((state: PasteCardsState) => {
@@ -169,6 +195,67 @@ export default function DeckScreen() {
     if (!deck) return;
     setRenameValue(deck.name);
     setRenameModal(true);
+  };
+
+  const openVoicesEditor = () => {
+    if (!deck) return;
+    setEditFrontLocale(deck.frontLocale);
+    setEditBackLocale(deck.backLocale);
+    setEditFrontVoiceId(deck.frontVoiceId);
+    setEditBackVoiceId(deck.backVoiceId);
+    setVoicesModal(true);
+    ttsService.initialize().then(() => {
+      const voices = ttsService.getVoices();
+      setEditFrontVoiceName(
+        findVoiceById(voices, deck.frontVoiceId)?.name ??
+          resolveSelectedVoice(voices, deck.frontLocale, deck.frontVoiceId)?.name ??
+          '',
+      );
+      setEditBackVoiceName(
+        findVoiceById(voices, deck.backVoiceId)?.name ??
+          resolveSelectedVoice(voices, deck.backLocale, deck.backVoiceId)?.name ??
+          '',
+      );
+    });
+  };
+
+  const openVoiceSidePicker = (side: 'front' | 'back') => {
+    // iOS cannot reliably present VoicePicker while this native modal is open.
+    // Dismiss this editor first, then present the picker from onDismiss.
+    setPendingVoiceSide(side);
+    setVoicesModal(false);
+  };
+
+  const handleVoicesModalDismiss = () => {
+    if (!pendingVoiceSide) return;
+    setVoiceSidePicker(pendingVoiceSide);
+    setPendingVoiceSide(null);
+  };
+
+  const closeVoiceSidePicker = () => {
+    setVoiceSidePicker(null);
+    // Let the picker finish its native dismissal before restoring the editor.
+    setTimeout(() => setVoicesModal(true), 300);
+  };
+
+  const confirmVoices = async () => {
+    if (!id) return;
+    setSavingVoices(true);
+    try {
+      await updateDeckLocalesAndVoices(id, {
+        frontLocale: editFrontLocale,
+        backLocale: editBackLocale,
+        frontVoiceId: editFrontVoiceId,
+        backVoiceId: editBackVoiceId,
+      });
+      invalidateDeck(id);
+      setVoicesModal(false);
+      await reloadDeck();
+    } catch {
+      Alert.alert('Save failed', 'Could not update languages and voices for this deck.');
+    } finally {
+      setSavingVoices(false);
+    }
   };
 
   const openScheduler = () => {
@@ -332,6 +419,12 @@ export default function DeckScreen() {
             style={styles.smallBtn}
           />
         </View>
+        <Button
+          title="Languages & Voices"
+          variant="secondary"
+          onPress={openVoicesEditor}
+          style={styles.fullWidthAction}
+        />
         <View style={styles.centeredActionRow}>
           <Button
             title="Delete"
@@ -514,6 +607,77 @@ export default function DeckScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      <Modal
+        visible={voicesModal}
+        animationType="fade"
+        transparent
+        onDismiss={handleVoicesModalDismiss}
+      >
+        <View style={styles.renameModalOverlay}>
+          <View style={styles.renameModalSheet}>
+            <Text style={styles.modalTitle}>Languages & Voices</Text>
+            <Text style={styles.importHint}>
+              Changes apply to this deck and all of its existing cards.
+            </Text>
+            <LocaleButton
+              locale={editFrontLocale}
+              label="Front Voice"
+              subtitle={editFrontVoiceName || undefined}
+              onPress={() => openVoiceSidePicker('front')}
+            />
+            <LocaleButton
+              locale={editBackLocale}
+              label="Back Voice"
+              subtitle={editBackVoiceName || undefined}
+              onPress={() => openVoiceSidePicker('back')}
+            />
+            <View style={styles.secondaryActions}>
+              <Button
+                title="Cancel"
+                variant="ghost"
+                onPress={() => setVoicesModal(false)}
+                style={styles.smallBtn}
+              />
+              <Button
+                title="Save"
+                onPress={confirmVoices}
+                loading={savingVoices}
+                style={styles.smallBtn}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <VoicePicker
+        visible={voiceSidePicker === 'front'}
+        selectedLocale={editFrontLocale}
+        selectedVoiceId={editFrontVoiceId}
+        onSelect={({ locale, voiceId }) => {
+          setEditFrontLocale(locale);
+          setEditFrontVoiceId(voiceId);
+          setEditFrontVoiceName(
+            findVoiceById(ttsService.getVoices(), voiceId)?.name ?? '',
+          );
+        }}
+        onClose={closeVoiceSidePicker}
+        title="Front Voice"
+      />
+      <VoicePicker
+        visible={voiceSidePicker === 'back'}
+        selectedLocale={editBackLocale}
+        selectedVoiceId={editBackVoiceId}
+        onSelect={({ locale, voiceId }) => {
+          setEditBackLocale(locale);
+          setEditBackVoiceId(voiceId);
+          setEditBackVoiceName(
+            findVoiceById(ttsService.getVoices(), voiceId)?.name ?? '',
+          );
+        }}
+        onClose={closeVoiceSidePicker}
+        title="Back Voice"
+      />
     </View>
   );
 }
@@ -567,6 +731,7 @@ const styles = StyleSheet.create({
   },
   actions: { paddingHorizontal: Spacing.md, marginBottom: Spacing.md },
   actionBtn: { marginBottom: Spacing.sm },
+  fullWidthAction: { marginTop: Spacing.sm, marginBottom: Spacing.sm },
   secondaryActions: { flexDirection: 'row', gap: Spacing.sm },
   secondaryActionsSpaced: { marginTop: Spacing.sm },
   centeredActionRow: { marginTop: Spacing.sm, alignItems: 'center' },

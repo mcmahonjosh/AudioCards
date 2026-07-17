@@ -4,20 +4,13 @@ import {
   loadAvailableVoices,
   resolveBestVoice,
   getVoicesForLocale,
+  findVoiceById,
   VoiceInfo,
 } from './voiceMatcher';
+import { buildSpeechOptions } from './speechOptions';
 
-import {
-  configureLoudSpeakerAudio,
-  configurePlaybackAudio,
-} from '@/src/services/audio/audioSession';
-import {
-  sliderToInternalVolume,
-  SPEECH_VOLUME_SLIDER_DEFAULT,
-  TTS_VOLUME_INTERNAL_MAX,
-  TTS_VOLUME_INTERNAL_MIN,
-} from '@/src/services/tts/volumeUtils';
-import { clamp } from '@/src/scheduler/time';
+import { configureLoudSpeakerAudio } from '@/src/services/audio/audioSession';
+import { SPEECH_VOLUME_SLIDER_DEFAULT } from '@/src/services/tts/volumeUtils';
 
 export interface SpeakOptions {
   rate?: number;
@@ -55,34 +48,64 @@ class TtsServiceImpl {
     return this.state === 'speaking';
   }
 
+  /**
+   * Resolve an installed voice identifier for playback.
+   * Validates overrides against the current device list; falls back to the
+   * language matcher when stale or missing.
+   */
+  private resolveVoiceIdentifier(
+    locale: string,
+    voiceOverride?: string,
+  ): string | undefined {
+    if (voiceOverride) {
+      const stillInstalled = findVoiceById(this.voices, voiceOverride);
+      if (stillInstalled) return stillInstalled.identifier;
+    }
+
+    return resolveBestVoice(this.voices, locale)?.identifier;
+  }
+
   async speak(
     text: string,
     locale: string,
     options: SpeakOptions = {},
   ): Promise<void> {
     if (!text.trim()) return;
-    await this.initialize();
+    // Refresh installed voices once so removed iOS downloads cannot break playback.
+    if (!this.initialized) {
+      await this.initialize();
+    }
     await this.stop();
 
-    configurePlaybackAudio();
+    // Stay on playAndRecord so post-TTS listening does not wait on a category flip.
+    configureLoudSpeakerAudio();
 
-    const voice = options.voiceOverride
-      ? this.voices.find((v) => v.identifier === options.voiceOverride)
-      : resolveBestVoice(this.voices, locale);
-
-    const userVolume = sliderToInternalVolume(
-      options.volume ?? SPEECH_VOLUME_SLIDER_DEFAULT,
+    const voiceIdentifier = this.resolveVoiceIdentifier(
+      locale,
+      options.voiceOverride,
     );
-    const volumeRange = TTS_VOLUME_INTERNAL_MAX - TTS_VOLUME_INTERNAL_MIN;
-    const volumeNorm = (userVolume - TTS_VOLUME_INTERNAL_MIN) / volumeRange;
-    // iOS native TTS has no volume param — boost pitch for louder perceived output
-    const pitch = clamp(1.0 + volumeNorm * 1.0, 1.0, 2.0);
-    const webVolume = clamp(0.5 + volumeNorm * 0.5, 0, 1);
+
+    const speechOptions = buildSpeechOptions({
+      locale,
+      voiceIdentifier,
+      rate: options.rate ?? 1.0,
+      volumePercent: options.volume ?? SPEECH_VOLUME_SLIDER_DEFAULT,
+    });
+
+    if (__DEV__) {
+      console.log('[TTS]', {
+        locale,
+        voiceIdentifier: speechOptions.voice,
+        rate: speechOptions.rate,
+        pitch: speechOptions.pitch,
+        volume: speechOptions.volume,
+      });
+    }
 
     const finish = (resolveFn: () => void) => {
       this.state = 'idle';
       this.resolveCurrent = null;
-      configureLoudSpeakerAudio();
+      // Resolve first so review UI can leave "Speaking..." immediately.
       resolveFn();
     };
 
@@ -91,11 +114,7 @@ class TtsServiceImpl {
       this.state = 'speaking';
 
       Speech.speak(text, {
-        language: locale,
-        voice: voice?.identifier,
-        rate: clamp((options.rate ?? 1.0) * (0.92 + volumeNorm * 0.08), 0.5, 2.0),
-        pitch,
-        volume: webVolume,
+        ...speechOptions,
         onStart: () => {
           this.state = 'speaking';
         },

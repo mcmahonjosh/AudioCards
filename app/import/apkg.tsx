@@ -20,13 +20,18 @@ import {
 } from '@/src/services/import/ImportService';
 import { ApkgDeck, ApkgParseResult } from '@/src/services/import/apkgImporter';
 import { useAppContext } from '@/src/context/AppContext';
+import { invalidateDeck } from '@/src/context/deckInvalidation';
+import { firstParam } from '@/src/utils/routeParams';
 
 export default function ApkgImportScreen() {
-  const params = useLocalSearchParams<{ fileUri?: string }>();
+  const params = useLocalSearchParams<{ fileUri?: string; targetDeckId?: string }>();
+  const targetDeckId = firstParam(params.targetDeckId);
+  const fileUriParam = firstParam(params.fileUri);
   const { settings } = useAppContext();
   const [parseResult, setParseResult] = useState<ApkgParseResult | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!!fileUriParam);
+  const [pickingFile, setPickingFile] = useState(false);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0, phase: '' });
   const [error, setError] = useState<string | null>(null);
@@ -47,19 +52,29 @@ export default function ApkgImportScreen() {
   }, []);
 
   useEffect(() => {
+    if (!fileUriParam) return;
+    let cancelled = false;
     (async () => {
-      if (params.fileUri) {
-        await loadFile(params.fileUri);
-        return;
-      }
-      const uri = await pickApkgFile();
-      if (!uri) {
-        router.back();
-        return;
-      }
-      await loadFile(uri);
+      if (!cancelled) await loadFile(fileUriParam);
     })();
-  }, [params.fileUri, loadFile]);
+    return () => {
+      cancelled = true;
+    };
+  }, [fileUriParam, loadFile]);
+
+  const handleChooseFile = async () => {
+    setPickingFile(true);
+    setError(null);
+    try {
+      const uri = await pickApkgFile();
+      if (!uri) return;
+      await loadFile(uri);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Import setup failed');
+    } finally {
+      setPickingFile(false);
+    }
+  };
 
   const decks = parseResult?.decks ?? [];
   const allSelected = decks.length > 0 && selected.size === decks.length;
@@ -101,10 +116,25 @@ export default function ApkgImportScreen() {
         selectedDeckIds: [...selected],
         frontLocale: settings.defaultFrontLocale,
         backLocale: settings.defaultBackLocale,
+        frontVoiceId: settings.defaultFrontVoiceId,
+        backVoiceId: settings.defaultBackVoiceId,
+        targetDeckId,
         onProgress: setProgress,
       });
+      if (targetDeckId) {
+        invalidateDeck(targetDeckId);
+      }
       Alert.alert('Import Complete', formatImportSummary(result), [
-        { text: 'OK', onPress: () => router.back() },
+        {
+          text: 'OK',
+          onPress: () => {
+            if (targetDeckId) {
+              router.replace(`/deck/${targetDeckId}`);
+            } else {
+              router.back();
+            }
+          },
+        },
       ]);
     } catch (e) {
       Alert.alert('Import Failed', e instanceof Error ? e.message : 'Import failed');
@@ -126,17 +156,38 @@ export default function ApkgImportScreen() {
     );
   }
 
-  if (error) {
+  if (error && !parseResult) {
     return (
       <View style={styles.center}>
         <Text style={styles.errorText}>{error}</Text>
-        <Button title="Go Back" onPress={() => router.back()} style={styles.backBtn} />
+        <Button title="Choose .apkg File" onPress={handleChooseFile} loading={pickingFile} style={styles.backBtn} />
+        <Button title="Go Back" variant="secondary" onPress={() => router.back()} style={styles.backBtn} />
+      </View>
+    );
+  }
+
+  if (!parseResult) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.idleTitle}>Import Anki package</Text>
+        <Text style={styles.idleSubtitle}>
+          {targetDeckId
+            ? 'Cards will be appended to your current deck; existing cards stay.'
+            : 'Choose an .apkg file to create or update decks named like in Anki.'}
+        </Text>
+        <Button
+          title="Choose .apkg File"
+          onPress={handleChooseFile}
+          loading={pickingFile}
+          style={styles.chooseBtn}
+        />
+        <Button title="Cancel" variant="secondary" onPress={() => router.back()} style={styles.backBtn} />
       </View>
     );
   }
 
   if (decks.length === 0) {
-    const stats = parseResult?.stats;
+    const stats = parseResult.stats;
     return (
       <View style={styles.center}>
         <Text style={styles.errorText}>No importable decks found in this package.</Text>
@@ -146,7 +197,8 @@ export default function ApkgImportScreen() {
             {stats.notesParsed} could be imported.
           </Text>
         )}
-        <Button title="Go Back" onPress={() => router.back()} style={styles.backBtn} />
+        <Button title="Choose another file" onPress={handleChooseFile} loading={pickingFile} style={styles.backBtn} />
+        <Button title="Go Back" variant="secondary" onPress={() => router.back()} style={styles.backBtn} />
       </View>
     );
   }
@@ -157,9 +209,9 @@ export default function ApkgImportScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.subtitle}>
-        Select Anki decks to import. HTML, images, audio, and scheduling are preserved.
-        Re-import decks you imported before to pick up paired audio fields. Embedded audio
-        playback requires a dev or production build with native audio support (not Expo Go).
+        {targetDeckId
+          ? 'Select Anki decks to add. Cards will be appended to your current deck; existing cards stay. HTML, images, audio, and scheduling are preserved.'
+          : 'Select Anki decks to import. HTML, images, audio, and scheduling are preserved. Re-import decks you imported before to pick up paired audio fields. Embedded audio playback requires a dev or production build with native audio support (not Expo Go).'}
       </Text>
 
       <TouchableOpacity style={styles.selectAllRow} onPress={toggleAll}>
@@ -239,6 +291,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: Spacing.lg,
   },
+  idleTitle: {
+    color: Colors.text,
+    fontSize: FontSize.lg,
+    fontWeight: '600',
+    marginBottom: Spacing.sm,
+    textAlign: 'center',
+  },
+  idleSubtitle: {
+    color: Colors.textMuted,
+    fontSize: FontSize.sm,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginBottom: Spacing.lg,
+    paddingHorizontal: Spacing.md,
+  },
+  chooseBtn: { alignSelf: 'stretch', marginBottom: Spacing.sm },
   subtitle: {
     color: Colors.textMuted,
     fontSize: FontSize.sm,
@@ -255,7 +323,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     paddingHorizontal: Spacing.md,
   },
-  backBtn: { marginTop: Spacing.md },
+  backBtn: { marginTop: Spacing.sm, alignSelf: 'stretch' },
   selectAllRow: {
     flexDirection: 'row',
     alignItems: 'center',

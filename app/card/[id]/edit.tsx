@@ -15,6 +15,7 @@ import { VoicePicker } from '@/src/components/VoicePicker';
 import { CardContentRenderer } from '@/src/components/card/CardContentRenderer';
 import { getCardById, updateCard, deleteCard } from '@/src/db/repositories';
 import { ttsService } from '@/src/services/tts/TtsService';
+import { findVoiceById } from '@/src/services/tts/voiceMatcher';
 import { useAppContext } from '@/src/context/AppContext';
 
 export default function EditCardScreen() {
@@ -24,6 +25,10 @@ export default function EditCardScreen() {
   const [backText, setBackText] = useState('');
   const [frontLocale, setFrontLocale] = useState('en-US');
   const [backLocale, setBackLocale] = useState('es-MX');
+  const [frontVoiceId, setFrontVoiceId] = useState<string | null>(null);
+  const [backVoiceId, setBackVoiceId] = useState<string | null>(null);
+  const [frontVoiceName, setFrontVoiceName] = useState('');
+  const [backVoiceName, setBackVoiceName] = useState('');
   const [contentFormat, setContentFormat] = useState<'plain' | 'html'>('plain');
   const [picker, setPicker] = useState<'front' | 'back' | null>(null);
   const [loading, setLoading] = useState(false);
@@ -36,21 +41,33 @@ export default function EditCardScreen() {
           setBackText(card.backText);
           setFrontLocale(card.frontLocale);
           setBackLocale(card.backLocale);
+          setFrontVoiceId(card.frontVoiceId);
+          setBackVoiceId(card.backVoiceId);
           setContentFormat(card.contentFormat);
         }
       });
     }
   }, [id]);
 
+  useEffect(() => {
+    ttsService.initialize().then(() => {
+      const voices = ttsService.getVoices();
+      setFrontVoiceName(findVoiceById(voices, frontVoiceId)?.name ?? '');
+      setBackVoiceName(findVoiceById(voices, backVoiceId)?.name ?? '');
+    });
+  }, [frontVoiceId, backVoiceId]);
+
   const previewFront = () =>
     ttsService.speak(frontText || 'Preview', frontLocale, {
       rate: settings.speechRate,
       volume: settings.speechVolume,
+      voiceOverride: frontVoiceId ?? undefined,
     });
   const previewBack = () =>
     ttsService.speak(backText || 'Preview', backLocale, {
       rate: settings.speechRate,
       volume: settings.speechVolume,
+      voiceOverride: backVoiceId ?? undefined,
     });
 
   const handleSave = async () => {
@@ -65,6 +82,8 @@ export default function EditCardScreen() {
         backText: backText.trim(),
         frontLocale,
         backLocale,
+        frontVoiceId,
+        backVoiceId,
         contentFormat,
       });
       router.back();
@@ -112,7 +131,12 @@ export default function EditCardScreen() {
           />
         </View>
       )}
-      <LocaleButton locale={frontLocale} label="Front Language" onPress={() => setPicker('front')} />
+      <LocaleButton
+        locale={frontLocale}
+        label="Front Voice"
+        subtitle={frontVoiceName || undefined}
+        onPress={() => setPicker('front')}
+      />
       <Button title="Preview Front Audio" variant="secondary" onPress={previewFront} style={styles.previewBtn} />
 
       <Text style={styles.label}>Back</Text>
@@ -134,14 +158,39 @@ export default function EditCardScreen() {
           />
         </View>
       )}
-      <LocaleButton locale={backLocale} label="Back Language" onPress={() => setPicker('back')} />
+      <LocaleButton
+        locale={backLocale}
+        label="Back Voice"
+        subtitle={backVoiceName || undefined}
+        onPress={() => setPicker('back')}
+      />
       <Button title="Preview Back Audio" variant="secondary" onPress={previewBack} style={styles.previewBtn} />
 
       <Button title="Save Changes" onPress={handleSave} loading={loading} style={styles.saveBtn} />
       <Button title="Delete Card" variant="again" onPress={handleDelete} />
 
-      <VoicePicker visible={picker === 'front'} selectedLocale={frontLocale} onSelect={setFrontLocale} onClose={() => setPicker(null)} title="Front Language" />
-      <VoicePicker visible={picker === 'back'} selectedLocale={backLocale} onSelect={setBackLocale} onClose={() => setPicker(null)} title="Back Language" />
+      <VoicePicker
+        visible={picker === 'front'}
+        selectedLocale={frontLocale}
+        selectedVoiceId={frontVoiceId}
+        onSelect={({ locale, voiceId }) => {
+          setFrontLocale(locale);
+          setFrontVoiceId(voiceId);
+        }}
+        onClose={() => setPicker(null)}
+        title="Front Voice"
+      />
+      <VoicePicker
+        visible={picker === 'back'}
+        selectedLocale={backLocale}
+        selectedVoiceId={backVoiceId}
+        onSelect={({ locale, voiceId }) => {
+          setBackLocale(locale);
+          setBackVoiceId(voiceId);
+        }}
+        onClose={() => setPicker(null)}
+        title="Back Voice"
+      />
     </ScrollView>
   );
 }

@@ -14,6 +14,8 @@ function makeDeck(config: Partial<Sm2DeckConfig>): Deck {
     name: 'Test',
     frontLocale: 'en-US',
     backLocale: 'es-MX',
+    frontVoiceId: null,
+    backVoiceId: null,
     algorithm: 'sm2',
     config: {
       algorithm: 'sm2',

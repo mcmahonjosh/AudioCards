@@ -119,6 +119,8 @@ export interface Deck {
   name: string;
   frontLocale: string;
   backLocale: string;
+  frontVoiceId: string | null;
+  backVoiceId: string | null;
   algorithm: SchedulerAlgorithm;
   config: DeckSchedulerConfig;
   createdAt: Date;
@@ -144,6 +146,8 @@ export interface Card {
   backText: string;
   frontLocale: string;
   backLocale: string;
+  frontVoiceId: string | null;
+  backVoiceId: string | null;
   contentFormat: ContentFormat;
   suspended: boolean;
   createdAt: Date;
@@ -162,6 +166,8 @@ export interface AppSettings {
   handsFreeMode: boolean;
   defaultFrontLocale: string;
   defaultBackLocale: string;
+  defaultFrontVoiceId: string | null;
+  defaultBackVoiceId: string | null;
   defaultNewCardsPerDay: number;
   safetyNoticeAcknowledged: boolean;
   voiceIntroAcknowledged: boolean;

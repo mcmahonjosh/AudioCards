@@ -57,8 +57,8 @@ type StateListener = (state: {
   previews: Partial<Record<Rating, IntervalPreview>> | null;
 }) => void;
 
-const CARD_SPEAK_DELAY_MS = 1000;
-const VOICE_COMMAND_COOLDOWN_MS = 900;
+const CARD_SPEAK_DELAY_MS = 250;
+const VOICE_COMMAND_COOLDOWN_MS = 100;
 
 export class ReviewSessionController {
   private deckId: string;
@@ -84,12 +84,42 @@ export class ReviewSessionController {
   }
 
   private isVoiceCommandAllowed(cmd: VoiceCommand): boolean {
+    if (this.phase === 'speaking_front' || this.phase === 'speaking_back') {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log('[VOICE] command blocked: card still speaking', {
+          command: cmd,
+          phase: this.phase,
+        });
+      }
+      return false;
+    }
     if (Date.now() >= this.voiceCommandAllowedAfter) return true;
     const rating = ratingFromCommand(cmd);
-    if (rating || cmd === 'end' || cmd === 'flip') {
+    // Block rating/end briefly against TTS echo; allow flip/repeat immediately.
+    if (rating || cmd === 'end') {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log('[VOICE] command blocked: post-TTS cooldown', {
+          command: cmd,
+          remainingMs: this.voiceCommandAllowedAfter - Date.now(),
+        });
+      }
       return false;
     }
     return true;
+  }
+
+  private handsFreeEnabled(): boolean {
+    return !!this.options.handsFreeMode;
+  }
+
+  private async beginListeningAfterSpeech(): Promise<void> {
+    if (!this.handsFreeEnabled() || !this.isSessionActive() || this.phase === 'paused') return;
+    // Fresh recognizer after TTS — avoids card-audio echo poisoning the first listen turn.
+    voiceCommandService.stop();
+    voiceCommandService.flushEcho();
+    this.voiceActivity = 'listening';
+    this.notify();
+    await voiceCommandService.start();
   }
 
   private isSessionActive(): boolean {
@@ -286,6 +316,7 @@ export class ReviewSessionController {
     const card = this.currentCard;
     if (!card || !this.isSessionActive()) return;
 
+    // Stop mic during TTS so speaker output is not transcribed as commands/noise.
     await this.stopListening();
     this.phase = 'speaking_front';
     this.voiceActivity = 'speaking';
@@ -300,6 +331,7 @@ export class ReviewSessionController {
         {
           rate: this.options.speechRate,
           volume: this.options.speechVolume ?? 60,
+          voiceOverride: card.frontVoiceId ?? undefined,
         },
       );
     } catch {
@@ -310,12 +342,12 @@ export class ReviewSessionController {
 
     this.phase = 'front';
     this.openVoiceCommandsAfterTts();
-    await this.startListening();
+    await this.beginListeningAfterSpeech();
   }
 
   async flip(): Promise<void> {
     if (this.isFlipped) return;
-    await this.stopListening();
+    // Flip the UI first so voice "flip" feels instant; then stop mic / play back.
     this.isFlipped = true;
     this.phase = 'back';
     this.notify();
@@ -323,6 +355,7 @@ export class ReviewSessionController {
     if (this.options.autoPlayBack !== false) {
       await this.speakBack();
     } else {
+      await this.stopListening();
       this.phase = 'rating';
       this.notify();
       await this.startListening();
@@ -333,6 +366,7 @@ export class ReviewSessionController {
     const card = this.currentCard;
     if (!card || !this.isSessionActive()) return;
 
+    await this.stopListening();
     this.phase = 'speaking_back';
     this.voiceActivity = 'speaking';
     this.notify();
@@ -346,6 +380,7 @@ export class ReviewSessionController {
         {
           rate: this.options.speechRate,
           volume: this.options.speechVolume ?? 60,
+          voiceOverride: card.backVoiceId ?? undefined,
           side: 'back',
           frontText: card.frontText,
         },
@@ -358,7 +393,7 @@ export class ReviewSessionController {
 
     this.phase = 'rating';
     this.openVoiceCommandsAfterTts();
-    await this.startListening();
+    await this.beginListeningAfterSpeech();
   }
 
   async repeat(): Promise<void> {
@@ -378,6 +413,7 @@ export class ReviewSessionController {
 
     const isNewIntro =
       card.scheduling.phase === 'new' && card.scheduling.reviewCount === 0;
+    const phaseBefore = card.scheduling.phase;
     const scheduler = getScheduler(card.scheduling.algorithm);
 
     try {
@@ -400,13 +436,17 @@ export class ReviewSessionController {
       );
 
       card.scheduling = result.card;
-      this.cardsReviewed++;
 
-      invalidateStatsData();
-      invalidateDeck(this.deckId);
+      const finishedForToday = leavesSessionForToday(result.nextDueAt);
+      // "Reviewed" = an old card finished for the day (scheduled 1+ days out).
+      // Learning steps and new-card introductions don't count.
+      const wasOldCard = phaseBefore === 'review' || phaseBefore === 'relearning';
+      if (wasOldCard && finishedForToday) {
+        this.cardsReviewed++;
+      }
 
       this.queue = this.queue.filter((c) => c.id !== card.id);
-      if (!leavesSessionForToday(result.nextDueAt)) {
+      if (!finishedForToday) {
         this.queue = reinsertCardByDue(this.queue, card);
       }
 
@@ -447,6 +487,8 @@ export class ReviewSessionController {
     this.voiceActivity = 'idle';
     voiceCommandService.stop();
     await cardMediaService.stop();
+    invalidateStatsData();
+    invalidateDeck(this.deckId);
     this.notify();
   }
 

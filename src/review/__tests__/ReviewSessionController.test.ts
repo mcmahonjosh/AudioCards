@@ -11,7 +11,7 @@ import { Sm2Scheduler } from '@/src/scheduler/Sm2Scheduler';
 
 const now = new Date('2025-06-01T12:00:00');
 const scheduler = new Sm2Scheduler();
-const CARD_DELAY_MS = 1100;
+const CARD_DELAY_MS = 350;
 
 let playSideImpl: typeof cardMediaService.playSide;
 let stopMediaImpl: typeof cardMediaService.stop;
@@ -34,6 +34,17 @@ function wait(ms: number): Promise<void> {
 function trackController(controller: ReviewSessionController): ReviewSessionController {
   activeController = controller;
   return controller;
+}
+
+/** Review-phase (old) card due now — rating 'good' schedules it 1+ days out, counting as a review. */
+function reviewPhaseState(cardId: string, deckId: string) {
+  return {
+    ...scheduler.createInitialState(cardId, deckId, now, DEFAULT_SM2_CONFIG),
+    phase: 'review' as const,
+    reviewCount: 3,
+    dueAt: now,
+    algorithmState: { ease: 2.5, intervalDays: 1, learningStepIndex: 0 },
+  };
 }
 
 describe('ReviewSessionController', () => {
@@ -158,7 +169,7 @@ describe('ReviewSessionController', () => {
       backText: 'uno',
       frontLocale: 'en-US',
       backLocale: 'es-MX',
-      scheduling: scheduler.createInitialState('c1', deck.id, now, DEFAULT_SM2_CONFIG),
+      scheduling: reviewPhaseState('c1', deck.id),
     });
     const card2 = await createCard({
       deckId: deck.id,
@@ -166,7 +177,7 @@ describe('ReviewSessionController', () => {
       backText: 'dos',
       frontLocale: 'en-US',
       backLocale: 'es-MX',
-      scheduling: scheduler.createInitialState('c2', deck.id, now, DEFAULT_SM2_CONFIG),
+      scheduling: reviewPhaseState('c2', deck.id),
     });
 
     const controller = trackController(
@@ -269,7 +280,7 @@ describe('ReviewSessionController', () => {
       backText: 'hola',
       frontLocale: 'en-US',
       backLocale: 'es-MX',
-      scheduling: scheduler.createInitialState('c1', deck.id, now, DEFAULT_SM2_CONFIG),
+      scheduling: reviewPhaseState('c1', deck.id),
     });
 
     const controller = trackController(
@@ -298,7 +309,7 @@ describe('ReviewSessionController', () => {
     emitVoiceCommand('good');
     assert.equal(reviewed, 0);
 
-    await wait(1000);
+    await wait(150);
     emitVoiceCommand('good');
     await wait(50);
     assert.equal(reviewed, 1);

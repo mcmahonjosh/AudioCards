@@ -3,12 +3,18 @@ import assert from 'node:assert/strict';
 import { getLocaleLabel } from '../locales';
 import {
   buildLocaleVoiceOptions,
+  findVoiceById,
   getLocalePickerTier,
+  getVoicesForExactLocale,
   isCompactVoice,
   isEnhancedVoice,
+  listLanguagesFromVoices,
+  listRegionsForLanguage,
   resolveBestVoice,
+  resolveSelectedVoice,
   resolveVoiceLocale,
   scoreVoice,
+  splitLocale,
   VoiceInfo,
 } from '../voiceMatcher';
 
@@ -137,6 +143,18 @@ describe('resolveBestVoice', () => {
     const enhancedEs = scoreVoice(voices[1], 'es-MX');
     const compactMx = scoreVoice(voices[0], 'es-MX');
     assert.ok(enhancedEs > compactMx);
+  });
+
+  it('returns null when no same-language voice exists (omit voice for OS default)', () => {
+    const englishOnly = voices.filter((v) => v.language.startsWith('en'));
+    assert.equal(resolveBestVoice(englishOnly, 'ja-JP'), null);
+  });
+
+  it('falls back to matcher when a saved voice identifier is no longer installed', () => {
+    const staleId = 'com.apple.voice.enhanced.es-MX.RemovedVoice';
+    assert.equal(findVoiceById(voices, staleId), null);
+    const fallback = resolveBestVoice(voices, 'es-MX');
+    assert.equal(fallback?.identifier, 'com.apple.voice.enhanced.es-MX.Paulina');
   });
 });
 
@@ -332,5 +350,52 @@ describe('resolveVoiceLocale', () => {
       quality: 'Enhanced',
     };
     assert.equal(resolveVoiceLocale(voice), 'es-mx');
+  });
+});
+
+describe('listLanguagesFromVoices / listRegionsForLanguage', () => {
+  it('lists unique languages from installed voices', () => {
+    const langs = listLanguagesFromVoices(voices);
+    const codes = langs.map((l) => l.code).sort();
+    assert.deepEqual(codes, ['en', 'es']);
+  });
+
+  it('lists regions for Spanish from installed voices', () => {
+    const regions = listRegionsForLanguage(voices, 'es');
+    const locales = regions.map((r) => r.locale.toLowerCase()).sort();
+    assert.ok(locales.includes('es-mx'));
+    assert.ok(locales.includes('es-es'));
+  });
+
+  it('lists all voices for an exact locale without collapsing to one', () => {
+    const listed = getVoicesForExactLocale(voices, 'es-MX');
+    assert.ok(listed.length >= 2);
+    assert.ok(listed.some((v) => v.identifier.includes('compact')));
+    assert.ok(listed.some((v) => v.identifier.includes('enhanced')));
+  });
+});
+
+describe('resolveSelectedVoice', () => {
+  it('prefers a saved voice identifier when still installed', () => {
+    const voice = resolveSelectedVoice(
+      voices,
+      'en-US',
+      'com.apple.voice.compact.en-US.Samantha',
+    );
+    assert.equal(voice?.identifier, 'com.apple.voice.compact.en-US.Samantha');
+  });
+
+  it('falls back to best voice when saved id is missing', () => {
+    const voice = resolveSelectedVoice(voices, 'en-US', 'com.apple.voice.missing');
+    assert.equal(voice?.identifier, 'com.apple.voice.enhanced.en-US.Samantha');
+  });
+});
+
+describe('splitLocale', () => {
+  it('splits language and region', () => {
+    const parts = splitLocale('es-MX');
+    assert.equal(parts.language, 'es');
+    assert.equal(parts.region.toLowerCase(), 'mx');
+    assert.equal(parts.locale, 'es-MX');
   });
 });

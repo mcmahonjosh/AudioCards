@@ -19,7 +19,11 @@ import { NumberStepper } from '@/src/components/NumberStepper';
 import { clampNewCardsPerDay } from '@/src/scheduler/newCardLimits';
 import { VolumeSlider } from '@/src/components/VolumeSlider';
 import { ttsService } from '@/src/services/tts/TtsService';
-import { describeVoice } from '@/src/services/tts/voiceMatcher';
+import {
+  describeVoice,
+  findVoiceById,
+  resolveSelectedVoice,
+} from '@/src/services/tts/voiceMatcher';
 import { voiceCommandService } from '@/src/services/voice/VoiceCommandService';
 import { getAppUrls } from '@/src/constants/urls';
 import { SafetyNoticeModal } from '@/src/components/SafetyNoticeModal';
@@ -44,12 +48,34 @@ export default function SettingsScreen() {
 
   useEffect(() => {
     ttsService.initialize().then(() => {
-      setVoiceCount(ttsService.getVoices().length);
-      setFrontVoiceLabel(describeVoice(ttsService.resolveVoice(settings.defaultFrontLocale)));
-      setBackVoiceLabel(describeVoice(ttsService.resolveVoice(settings.defaultBackLocale)));
+      const voices = ttsService.getVoices();
+      setVoiceCount(voices.length);
+      setFrontVoiceLabel(
+        describeVoice(
+          resolveSelectedVoice(
+            voices,
+            settings.defaultFrontLocale,
+            settings.defaultFrontVoiceId,
+          ),
+        ),
+      );
+      setBackVoiceLabel(
+        describeVoice(
+          resolveSelectedVoice(
+            voices,
+            settings.defaultBackLocale,
+            settings.defaultBackVoiceId,
+          ),
+        ),
+      );
     });
     voiceCommandService.getPermissionStatus().then(setPermissions);
-  }, [settings.defaultFrontLocale, settings.defaultBackLocale]);
+  }, [
+    settings.defaultFrontLocale,
+    settings.defaultBackLocale,
+    settings.defaultFrontVoiceId,
+    settings.defaultBackVoiceId,
+  ]);
 
   const requestPermissions = async () => {
     const granted = await voiceCommandService.requestPermissions();
@@ -73,7 +99,11 @@ export default function SettingsScreen() {
     await ttsService.speak(
       'Hello! This is a preview of the text to speech voice.',
       settings.defaultFrontLocale,
-      { rate: settings.speechRate, volume: localVolume },
+      {
+        rate: settings.speechRate,
+        volume: localVolume,
+        voiceOverride: settings.defaultFrontVoiceId ?? undefined,
+      },
     );
   };
 
@@ -145,15 +175,23 @@ export default function SettingsScreen() {
         For better quality on iPhone: Settings → Accessibility → Spoken Content → Voices → download Enhanced voices for your languages.
       </Text>
 
-      <Text style={styles.section}>Default Languages</Text>
+      <Text style={styles.section}>Default Voices</Text>
       <LocaleButton
         locale={settings.defaultFrontLocale}
-        label="Front Language"
+        label="Front Voice"
+        subtitle={
+          findVoiceById(ttsService.getVoices(), settings.defaultFrontVoiceId)?.name ??
+          frontVoiceLabel
+        }
         onPress={() => setVoicePicker('front')}
       />
       <LocaleButton
         locale={settings.defaultBackLocale}
-        label="Back Language"
+        label="Back Voice"
+        subtitle={
+          findVoiceById(ttsService.getVoices(), settings.defaultBackVoiceId)?.name ??
+          backVoiceLabel
+        }
         onPress={() => setVoicePicker('back')}
       />
 
@@ -202,16 +240,22 @@ export default function SettingsScreen() {
       <VoicePicker
         visible={voicePicker === 'front'}
         selectedLocale={settings.defaultFrontLocale}
-        onSelect={(locale) => updateSettings({ defaultFrontLocale: locale })}
+        selectedVoiceId={settings.defaultFrontVoiceId}
+        onSelect={({ locale, voiceId }) =>
+          updateSettings({ defaultFrontLocale: locale, defaultFrontVoiceId: voiceId })
+        }
         onClose={() => setVoicePicker(null)}
-        title="Front Language"
+        title="Front Voice"
       />
       <VoicePicker
         visible={voicePicker === 'back'}
         selectedLocale={settings.defaultBackLocale}
-        onSelect={(locale) => updateSettings({ defaultBackLocale: locale })}
+        selectedVoiceId={settings.defaultBackVoiceId}
+        onSelect={({ locale, voiceId }) =>
+          updateSettings({ defaultBackLocale: locale, defaultBackVoiceId: voiceId })
+        }
         onClose={() => setVoicePicker(null)}
-        title="Back Language"
+        title="Back Voice"
       />
     </ScrollView>
   );

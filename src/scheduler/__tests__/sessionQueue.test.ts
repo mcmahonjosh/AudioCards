@@ -43,6 +43,8 @@ function makeCard(
     backText: `back ${id}`,
     frontLocale: 'en-US',
     backLocale: 'es-MX',
+    frontVoiceId: null,
+    backVoiceId: null,
     contentFormat: 'plain',
     suspended: false,
     createdAt: now,

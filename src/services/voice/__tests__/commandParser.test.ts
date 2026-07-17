@@ -19,6 +19,10 @@ describe('commandParser', () => {
   it('parses session commands', () => {
     assert.equal(parseVoiceCommand('pause'), 'pause');
     assert.equal(parseVoiceCommand('end session'), 'end');
+    assert.equal(parseVoiceCommand('end'), null);
+    assert.equal(parseVoiceCommand('done'), null);
+    assert.equal(parseVoiceCommand('quit'), null);
+    assert.equal(parseVoiceCommand('finish'), null);
   });
 
   it('returns null for unrecognized input', () => {
@@ -30,6 +34,8 @@ describe('commandParser', () => {
     assert.equal(parseVoiceCommand('that was easy to remember today'), null);
     assert.equal(parseVoiceCommand('please end the session now thanks'), null);
     assert.equal(parseVoiceCommand('the word good appears in this long phrase'), null);
+    assert.equal(parseVoiceCommand('Davido repeat'), null);
+    assert.equal(parseVoiceCommand('say again'), 'repeat');
   });
 
   it('still matches short utterances', () => {

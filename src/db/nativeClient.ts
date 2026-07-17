@@ -3,6 +3,7 @@ import { openDatabaseSync, SQLiteDatabase } from 'expo-sqlite';
 import * as schema from './schema';
 import { MIGRATION_SQL } from './migrations/0000_initial';
 import { MIGRATION_0001_SQL } from './migrations/0001_rich_content';
+import { MIGRATION_0002_SQL } from './migrations/0002_voice_ids';
 import { DATABASE_NAME, setNativeDb, type AppDatabase } from './client';
 
 const MIGRATIONS: { id: string; sql: string; alter?: { table: string; column: string; def: string }[] }[] = [
@@ -11,6 +12,16 @@ const MIGRATIONS: { id: string; sql: string; alter?: { table: string; column: st
     id: '0001_rich_content',
     sql: MIGRATION_0001_SQL,
     alter: [{ table: 'cards', column: 'content_format', def: "TEXT NOT NULL DEFAULT 'plain'" }],
+  },
+  {
+    id: '0002_voice_ids',
+    sql: MIGRATION_0002_SQL,
+    alter: [
+      { table: 'decks', column: 'front_voice_id', def: 'TEXT' },
+      { table: 'decks', column: 'back_voice_id', def: 'TEXT' },
+      { table: 'cards', column: 'front_voice_id', def: 'TEXT' },
+      { table: 'cards', column: 'back_voice_id', def: 'TEXT' },
+    ],
   },
 ];
 

@@ -1,5 +1,6 @@
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
+import { Alert } from 'react-native';
 import { createCard, getDeckById } from '@/src/db/repositories';
 import { invalidateStatsData } from '@/src/context/statsInvalidation';
 import { invalidateDeck, invalidateAllDecks } from '@/src/context/deckInvalidation';
@@ -11,6 +12,22 @@ import {
   ApkgParseResult,
 } from './apkgImporter';
 
+/** Serialize native document picker sessions — concurrent getDocumentAsync throws on iOS. */
+let documentPickChain: Promise<unknown> = Promise.resolve();
+
+async function withDocumentPicker<T>(fn: () => Promise<T>): Promise<T> {
+  const run = documentPickChain.then(fn, fn);
+  documentPickChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+function isPickerInProgressError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return /document picking in progress|await other document picking/i.test(msg);
+}
 export async function importCsvToDeck(deckId: string, fileUri: string): Promise<ImportSummary> {
   const deck = await getDeckById(deckId);
   if (!deck) throw new Error('Deck not found');
@@ -63,13 +80,26 @@ export async function previewCsvFile(
 }
 
 export async function pickCsvFile(): Promise<string | null> {
-  const result = await DocumentPicker.getDocumentAsync({
-    type: ['text/csv', 'text/comma-separated-values', 'text/plain'],
-    copyToCacheDirectory: true,
-  });
+  try {
+    const result = await withDocumentPicker(() =>
+      DocumentPicker.getDocumentAsync({
+        type: ['text/csv', 'text/comma-separated-values', 'text/plain'],
+        copyToCacheDirectory: true,
+      }),
+    );
 
-  if (result.canceled || !result.assets?.[0]) return null;
-  return result.assets[0].uri;
+    if (result.canceled || !result.assets?.[0]) return null;
+    return result.assets[0].uri;
+  } catch (e) {
+    if (isPickerInProgressError(e)) {
+      Alert.alert(
+        'File picker busy',
+        'Another file picker is still open. Close it, then try again.',
+      );
+      return null;
+    }
+    throw e;
+  }
 }
 
 export async function importPastedRowsToDeck(
@@ -112,15 +142,37 @@ export async function pickAndImportCsv(deckId: string): Promise<ImportSummary | 
 }
 
 export async function pickApkgFile(): Promise<string | null> {
-  const result = await DocumentPicker.getDocumentAsync({
-    type: ['application/octet-stream', '*/*'],
-    copyToCacheDirectory: true,
-  });
+  try {
+    const result = await withDocumentPicker(() =>
+      DocumentPicker.getDocumentAsync({
+        type: ['application/octet-stream', '*/*'],
+        copyToCacheDirectory: true,
+      }),
+    );
 
-  if (result.canceled || !result.assets?.[0]) return null;
-  const uri = result.assets[0].uri;
-  if (await apkgImporter.canImport(uri)) return uri;
-  return null;
+    if (result.canceled || !result.assets?.[0]) return null;
+    const asset = result.assets[0];
+    const uri = asset.uri;
+    const name = asset.name ?? '';
+    const looksLikeApkg =
+      uri.toLowerCase().endsWith('.apkg') || name.toLowerCase().endsWith('.apkg');
+    if (looksLikeApkg) return uri;
+
+    Alert.alert(
+      'Invalid file',
+      'Please choose an Anki package file (.apkg).',
+    );
+    return null;
+  } catch (e) {
+    if (isPickerInProgressError(e)) {
+      Alert.alert(
+        'File picker busy',
+        'Another file picker is still open. Close it, then try again.',
+      );
+      return null;
+    }
+    throw e;
+  }
 }
 
 export async function parseApkgFile(

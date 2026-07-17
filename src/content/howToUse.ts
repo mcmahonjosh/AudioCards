@@ -3,7 +3,7 @@ export const VOICE_COMMANDS = [
   { command: 'repeat', description: 'Replay the current side' },
   { command: 'again / hard / good / easy', description: 'Rate the card (after flipping)' },
   { command: 'pause / resume', description: 'Pause or resume the session' },
-  { command: 'end', description: 'End the review session' },
+  { command: 'end session', description: 'End the review session' },
 ] as const;
 
 export const VOICE_INTRO_PARAGRAPHS = [

@@ -8,7 +8,10 @@ import { Colors } from '@/constants/Colors';
 
 LogBox.ignoreLogs([
   'TNodeChildrenRenderer: Support for defaultProps',
+  'MemoizedTnodeRenderer: Support for defaultProps',
+  'TRenderEngineProvider: Support for defaultProps',
   'Support for defaultProps will be removed from function components',
+  'Support for defaultProps will be removed from memo components',
 ]);
 
 export default function RootLayout() {
